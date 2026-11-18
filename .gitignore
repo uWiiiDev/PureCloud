@@ -1,0 +1,11 @@
+# Lokale Daten & SQLite-Datenbank niemals ins Git-Repository aufnehmen
+/storage/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Lokale Hilfs-/Deployment-Skripte & Archive
+/deploy.sh
+/cloud.zip
+.DS_Store

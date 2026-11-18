@@ -1,0 +1,19 @@
+# Schutz sensibler Dateien
+<FilesMatch "\.(sqlite|sqlite3|db|log|ini|sh|sql)$">
+    Require all denied
+</FilesMatch>
+
+Options -Indexes
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# HTTP Authorization Header an PHP durchreichen (wichtig für WebDAV unter FastCGI/FPM)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:Authorization} .+
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
