@@ -234,6 +234,38 @@ class Database
             );
 
             CREATE INDEX IF NOT EXISTS idx_file_versions_file ON file_versions(file_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS pinned_items (
+                user_id INTEGER NOT NULL,
+                item_type TEXT NOT NULL CHECK(item_type IN ('file', 'folder')),
+                item_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, item_type, item_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pinned_user ON pinned_items(user_id);
+
+            CREATE TABLE IF NOT EXISTS bundles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bundles_owner ON bundles(owner_id);
+
+            CREATE TABLE IF NOT EXISTS bundle_items (
+                bundle_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (bundle_id, file_id),
+                FOREIGN KEY (bundle_id) REFERENCES bundles(id) ON DELETE CASCADE,
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
         ");
 
         // Auto-migrate 2FA columns on existing users table

@@ -180,6 +180,18 @@ class FileManager
             }
         }
 
+        $pinFolders = [];
+        $pinFiles = [];
+        $pinStmt = $pdo->prepare('SELECT item_type, item_id FROM pinned_items WHERE user_id = :uid');
+        $pinStmt->execute([':uid' => $userId]);
+        foreach ($pinStmt->fetchAll() as $pin) {
+            if ($pin['item_type'] === 'folder') {
+                $pinFolders[(int)$pin['item_id']] = true;
+            } else {
+                $pinFiles[(int)$pin['item_id']] = true;
+            }
+        }
+
         if ($view === 'favorites') {
             $fStmt = $pdo->prepare("
                 SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
@@ -212,8 +224,9 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Favoriten']],
-                'folders'        => self::formatFolders($folders, $favFolders),
-                'files'          => self::formatFiles($files, $favFiles),
+                'folders'        => self::formatFolders($folders, $favFolders, $pinFolders),
+                'files'          => self::formatFiles($files, $favFiles, $pinFiles),
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -243,8 +256,9 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Papierkorb']],
-                'folders'        => self::formatFolders($folders, $favFolders),
-                'files'          => self::formatFiles($files, $favFiles),
+                'folders'        => self::formatFolders($folders, $favFolders, $pinFolders),
+                'files'          => self::formatFiles($files, $favFiles, $pinFiles),
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -266,7 +280,8 @@ class FileManager
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Tresor (Verschlüsselt)']],
                 'folders'        => [],
-                'files'          => self::formatFiles($files, $favFiles),
+                'files'          => self::formatFiles($files, $favFiles, $pinFiles),
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -320,8 +335,9 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'read',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Für mich freigegeben']],
-                'folders'        => self::formatFolders($folders, $favFolders),
-                'files'          => self::formatFiles($files, $favFiles),
+                'folders'        => self::formatFolders($folders, $favFolders, $pinFolders),
+                'files'          => self::formatFiles($files, $favFiles, $pinFiles),
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -355,8 +371,9 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Suche: "' . $search . '"']],
-                'folders'        => self::formatFolders($folders, $favFolders),
-                'files'          => self::formatFiles($files, $favFiles),
+                'folders'        => self::formatFolders($folders, $favFolders, $pinFolders),
+                'files'          => self::formatFiles($files, $favFiles, $pinFiles),
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -386,8 +403,9 @@ class FileManager
                     ['id' => null, 'name' => 'Meine Dateien'],
                     ['id' => -1,   'name' => 'Gruppenordner'],
                 ],
-                'folders'        => self::formatFolders($gfStmt->fetchAll(), $favFolders),
+                'folders'        => self::formatFolders($gfStmt->fetchAll(), $favFolders, $pinFolders),
                 'files'          => [],
+                'pinned_items'   => self::getPinnedItems($userId),
             ];
         }
 
@@ -448,7 +466,7 @@ class FileManager
                 ORDER BY f.name COLLATE NOCASE ASC
             ");
             $fStmt->execute([':uid' => $effectiveOwnerId]);
-            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders);
+            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders, $pinFolders);
 
             // Check if user has any assigned Group Folders -> bundle them into one "Gruppenordner" entry!
             $gfCntStmt = $pdo->prepare("
@@ -505,7 +523,7 @@ class FileManager
                 ORDER BY f.name COLLATE NOCASE ASC
             ");
             $fStmt->execute([':uid' => $effectiveOwnerId, ':pid' => $folderId]);
-            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders);
+            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders, $pinFolders);
 
             $fileStmt = $pdo->prepare("
                 SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
@@ -527,11 +545,12 @@ class FileManager
             'is_group_tree'  => $isGroupTree,
             'breadcrumbs'    => $breadcrumbs,
             'folders'        => $formattedFolders,
-            'files'          => self::formatFiles($fileStmt->fetchAll(), $favFiles),
+            'files'          => self::formatFiles($fileStmt->fetchAll(), $favFiles, $pinFiles),
+            'pinned_items'   => self::getPinnedItems($userId),
         ];
     }
 
-    private static function formatFolders(array $rows, array $favFolders = []): array
+    private static function formatFolders(array $rows, array $favFolders = [], array $pinFolders = []): array
     {
         $out = [];
         $seen = [];
@@ -548,6 +567,7 @@ class FileManager
                 'parent_id'         => isset($r['parent_id']) && $r['parent_id'] !== null ? (int)$r['parent_id'] : null,
                 'is_group_folder'   => (int)($r['is_group_folder'] ?? 0) === 1,
                 'is_favorite'       => !empty($favFolders[$fid]) || !empty($r['is_favorite']),
+                'is_pinned'         => !empty($pinFolders[$fid]),
                 'color_tag'         => $r['color_tag'] ?? null,
                 'notes'             => $r['notes'] ?? null,
                 'is_locked'         => (int)($r['is_locked'] ?? 0) === 1,
@@ -565,7 +585,7 @@ class FileManager
         return $out;
     }
 
-    private static function formatFiles(array $rows, array $favFiles = []): array
+    private static function formatFiles(array $rows, array $favFiles = [], array $pinFiles = []): array
     {
         $out = [];
         foreach ($rows as $r) {
@@ -582,6 +602,7 @@ class FileManager
                 'sha256'            => $r['sha256'] ?? '',
                 'is_encrypted'      => (int)$r['is_encrypted'] === 1,
                 'is_favorite'       => !empty($favFiles[$fid]) || !empty($r['is_favorite']),
+                'is_pinned'         => !empty($pinFiles[$fid]),
                 'color_tag'         => $r['color_tag'] ?? null,
                 'notes'             => $r['notes'] ?? null,
                 'is_locked'         => (int)($r['is_locked'] ?? 0) === 1,
@@ -2911,5 +2932,273 @@ class FileManager
             $newId = (int)$pdo->lastInsertId();
             return ['id' => $newId, 'type' => 'file', 'name' => $aliasName, 'alias_target_id' => $targetId];
         }
+    }
+
+    public static function togglePin(int $userId, string $type, int $id): bool
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT 1 FROM pinned_items WHERE user_id = :uid AND item_type = :type AND item_id = :id');
+        $stmt->execute([':uid' => $userId, ':type' => $type, ':id' => $id]);
+        if ($stmt->fetch()) {
+            $del = $pdo->prepare('DELETE FROM pinned_items WHERE user_id = :uid AND item_type = :type AND item_id = :id');
+            $del->execute([':uid' => $userId, ':type' => $type, ':id' => $id]);
+            return false;
+        } else {
+            $ins = $pdo->prepare('INSERT OR IGNORE INTO pinned_items (user_id, item_type, item_id) VALUES (:uid, :type, :id)');
+            $ins->execute([':uid' => $userId, ':type' => $type, ':id' => $id]);
+            return true;
+        }
+    }
+
+    public static function getPinnedItems(int $userId): array
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT item_type, item_id FROM pinned_items WHERE user_id = :uid ORDER BY created_at ASC');
+        $stmt->execute([':uid' => $userId]);
+        $rows = $stmt->fetchAll();
+        $items = [];
+        foreach ($rows as $r) {
+            $type = $r['item_type'];
+            $id = (int)$r['item_id'];
+            if ($type === 'folder') {
+                $f = $pdo->prepare('SELECT id, name FROM folders WHERE id = :id AND deleted_at IS NULL');
+                $f->execute([':id' => $id]);
+                $fRow = $f->fetch();
+                if ($fRow) {
+                    $items[] = ['type' => 'folder', 'id' => (int)$fRow['id'], 'name' => $fRow['name']];
+                }
+            } else {
+                $fl = $pdo->prepare('SELECT id, name, mime_type, is_encrypted, size_bytes FROM files WHERE id = :id AND deleted_at IS NULL');
+                $fl->execute([':id' => $id]);
+                $flRow = $fl->fetch();
+                if ($flRow) {
+                    $items[] = [
+                        'type' => 'file',
+                        'id' => (int)$flRow['id'],
+                        'name' => $flRow['name'],
+                        'category' => self::categorizeFile($flRow['name'], $flRow['mime_type']),
+                        'is_encrypted' => (int)$flRow['is_encrypted'] === 1,
+                        'size_bytes' => (int)$flRow['size_bytes'],
+                    ];
+                }
+            }
+        }
+        return $items;
+    }
+
+    public static function shredItem(int $userId, string $type, int $id): array
+    {
+        $pdo = Database::get();
+        if ($type === 'folder') {
+            $access = self::resolveFolderAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Berechtigung zum Schreddern dieses Ordners.');
+            }
+            if ((int)($access['folder']['is_locked'] ?? 0) === 1) {
+                throw new RuntimeException('Ordner ist schreibgeschützt.');
+            }
+            $shreddedCount = self::recursivelyShredFolder($pdo, $id);
+            return ['type' => 'folder', 'id' => $id, 'shredded_count' => $shreddedCount];
+        } else {
+            $access = self::resolveFileAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Berechtigung zum Schreddern dieser Datei.');
+            }
+            if ((int)($access['file']['is_locked'] ?? 0) === 1) {
+                throw new RuntimeException('Datei ist schreibgeschützt.');
+            }
+            $file = $access['file'];
+            self::secureWipeStorageFile($file['storage_name']);
+
+            $verStmt = $pdo->prepare('SELECT storage_name FROM file_versions WHERE file_id = :fid');
+            $verStmt->execute([':fid' => $id]);
+            foreach ($verStmt->fetchAll() as $ver) {
+                self::secureWipeStorageFile($ver['storage_name']);
+            }
+            $pdo->prepare('DELETE FROM file_versions WHERE file_id = :fid')->execute([':fid' => $id]);
+
+            $pdo->prepare('DELETE FROM favorites WHERE item_type = "file" AND item_id = :id')->execute([':id' => $id]);
+            $pdo->prepare('DELETE FROM pinned_items WHERE item_type = "file" AND item_id = :id')->execute([':id' => $id]);
+            $pdo->prepare('DELETE FROM public_shares WHERE item_type = "file" AND item_id = :id')->execute([':id' => $id]);
+            $pdo->prepare('DELETE FROM user_shares WHERE item_type = "file" AND item_id = :id')->execute([':id' => $id]);
+            $pdo->prepare('DELETE FROM bundle_items WHERE file_id = :id')->execute([':id' => $id]);
+            $pdo->prepare('DELETE FROM files WHERE id = :id')->execute([':id' => $id]);
+
+            return ['type' => 'file', 'id' => $id, 'name' => $file['name']];
+        }
+    }
+
+    private static function secureWipeStorageFile(string $storageName): void
+    {
+        $path = Database::FILES_DIR . '/' . basename($storageName);
+        if (!is_file($path)) {
+            return;
+        }
+
+        $size = filesize($path);
+        if ($size > 0 && is_writable($path)) {
+            $fp = @fopen($path, 'r+b');
+            if ($fp) {
+                $chunkSize = 65536;
+                // Pass 1: Random data
+                for ($written = 0; $written < $size; $written += $chunkSize) {
+                    $len = min($chunkSize, $size - $written);
+                    fwrite($fp, random_bytes($len));
+                }
+                fflush($fp);
+                fseek($fp, 0);
+
+                // Pass 2: Binary zeros
+                $zeroChunk = str_repeat("\0", $chunkSize);
+                for ($written = 0; $written < $size; $written += $chunkSize) {
+                    $len = min($chunkSize, $size - $written);
+                    fwrite($fp, substr($zeroChunk, 0, $len));
+                }
+                fflush($fp);
+                fseek($fp, 0);
+
+                // Pass 3: Random data again
+                for ($written = 0; $written < $size; $written += $chunkSize) {
+                    $len = min($chunkSize, $size - $written);
+                    fwrite($fp, random_bytes($len));
+                }
+                fflush($fp);
+
+                ftruncate($fp, 0);
+                fclose($fp);
+            }
+        }
+        @unlink($path);
+    }
+
+    private static function recursivelyShredFolder(PDO $pdo, int $folderId): int
+    {
+        $count = 0;
+        $sub = $pdo->prepare('SELECT id FROM folders WHERE parent_id = :pid');
+        $sub->execute([':pid' => $folderId]);
+        foreach ($sub->fetchAll() as $s) {
+            $count += self::recursivelyShredFolder($pdo, (int)$s['id']);
+        }
+
+        $files = $pdo->prepare('SELECT id, storage_name FROM files WHERE folder_id = :fid');
+        $files->execute([':fid' => $folderId]);
+        foreach ($files->fetchAll() as $fl) {
+            self::secureWipeStorageFile($fl['storage_name']);
+            $verStmt = $pdo->prepare('SELECT storage_name FROM file_versions WHERE file_id = :fid');
+            $verStmt->execute([':fid' => $fl['id']]);
+            foreach ($verStmt->fetchAll() as $ver) {
+                self::secureWipeStorageFile($ver['storage_name']);
+            }
+            $pdo->prepare('DELETE FROM file_versions WHERE file_id = :fid')->execute([':fid' => $fl['id']]);
+            $pdo->prepare('DELETE FROM favorites WHERE item_type = "file" AND item_id = :id')->execute([':id' => $fl['id']]);
+            $pdo->prepare('DELETE FROM pinned_items WHERE item_type = "file" AND item_id = :id')->execute([':id' => $fl['id']]);
+            $pdo->prepare('DELETE FROM bundle_items WHERE file_id = :id')->execute([':id' => $fl['id']]);
+            $count++;
+        }
+        $pdo->prepare('DELETE FROM files WHERE folder_id = :fid')->execute([':fid' => $folderId]);
+        $pdo->prepare('DELETE FROM favorites WHERE item_type = "folder" AND item_id = :id')->execute([':id' => $folderId]);
+        $pdo->prepare('DELETE FROM pinned_items WHERE item_type = "folder" AND item_id = :id')->execute([':id' => $folderId]);
+        $pdo->prepare('DELETE FROM folders WHERE id = :id')->execute([':id' => $folderId]);
+        return $count;
+    }
+
+    public static function getBundles(int $userId): array
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('
+            SELECT b.id, b.name, b.description, b.created_at, b.updated_at,
+                   (SELECT COUNT(*) FROM bundle_items bi WHERE bi.bundle_id = b.id) AS item_count,
+                   (SELECT COALESCE(SUM(fl.size_bytes), 0) FROM bundle_items bi JOIN files fl ON fl.id = bi.file_id WHERE bi.bundle_id = b.id AND fl.deleted_at IS NULL) AS total_bytes
+            FROM bundles b
+            WHERE b.owner_id = :uid
+            ORDER BY b.updated_at DESC
+        ');
+        $stmt->execute([':uid' => $userId]);
+        return $stmt->fetchAll();
+    }
+
+    public static function createBundle(int $userId, string $name, ?string $desc = null, array $fileIds = []): array
+    {
+        $pdo = Database::get();
+        $name = trim(self::sanitizeName($name)) ?: 'Neue Sammelmappe';
+        $stmt = $pdo->prepare('INSERT INTO bundles (owner_id, name, description, created_at, updated_at) VALUES (:uid, :name, :desc, datetime("now"), datetime("now"))');
+        $stmt->execute([':uid' => $userId, ':name' => $name, ':desc' => $desc]);
+        $bundleId = (int)$pdo->lastInsertId();
+
+        if (!empty($fileIds)) {
+            self::addFilesToBundle($userId, $bundleId, $fileIds);
+        }
+
+        return ['id' => $bundleId, 'name' => $name];
+    }
+
+    public static function addFilesToBundle(int $userId, int $bundleId, array $fileIds): int
+    {
+        $pdo = Database::get();
+        $bStmt = $pdo->prepare('SELECT id FROM bundles WHERE id = :bid AND owner_id = :uid');
+        $bStmt->execute([':bid' => $bundleId, ':uid' => $userId]);
+        if (!$bStmt->fetch()) {
+            throw new RuntimeException('Sammelmappe nicht gefunden.');
+        }
+
+        $ins = $pdo->prepare('INSERT OR IGNORE INTO bundle_items (bundle_id, file_id, created_at) VALUES (:bid, :fid, datetime("now"))');
+        $added = 0;
+        foreach ($fileIds as $fid) {
+            $fid = (int)$fid;
+            if ($fid > 0) {
+                $ins->execute([':bid' => $bundleId, ':fid' => $fid]);
+                $added += $ins->rowCount();
+            }
+        }
+        $pdo->prepare('UPDATE bundles SET updated_at = datetime("now") WHERE id = :bid')->execute([':bid' => $bundleId]);
+        return $added;
+    }
+
+    public static function removeFileFromBundle(int $userId, int $bundleId, int $fileId): bool
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('
+            DELETE FROM bundle_items
+            WHERE bundle_id = :bid AND file_id = :fid
+              AND bundle_id IN (SELECT id FROM bundles WHERE id = :bid2 AND owner_id = :uid)
+        ');
+        $stmt->execute([':bid' => $bundleId, ':fid' => $fileId, ':bid2' => $bundleId, ':uid' => $userId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    public static function deleteBundle(int $userId, int $bundleId): bool
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('DELETE FROM bundles WHERE id = :bid AND owner_id = :uid');
+        $stmt->execute([':bid' => $bundleId, ':uid' => $userId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    public static function getBundleDetails(int $userId, int $bundleId): array
+    {
+        $pdo = Database::get();
+        $bStmt = $pdo->prepare('SELECT id, name, description, created_at, updated_at FROM bundles WHERE id = :bid AND owner_id = :uid');
+        $bStmt->execute([':bid' => $bundleId, ':uid' => $userId]);
+        $bundle = $bStmt->fetch();
+        if (!$bundle) {
+            throw new RuntimeException('Sammelmappe nicht gefunden.');
+        }
+
+        $fStmt = $pdo->prepare('
+            SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted,
+                   fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type,
+                   fl.created_at, fl.updated_at
+            FROM bundle_items bi
+            JOIN files fl ON fl.id = bi.file_id
+            WHERE bi.bundle_id = :bid AND fl.deleted_at IS NULL
+            ORDER BY bi.created_at ASC
+        ');
+        $fStmt->execute([':bid' => $bundleId]);
+        $files = self::formatFiles($fStmt->fetchAll());
+
+        return [
+            'bundle' => $bundle,
+            'files' => $files,
+        ];
     }
 }

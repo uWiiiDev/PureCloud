@@ -2030,3 +2030,177 @@ html[data-theme="light"] .alert-success {
         grid-template-columns: 1fr !important;
     }
 }
+
+/* Pinned Bar */
+.pinned-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.85rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+.pinned-bar-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    margin-right: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+.pinned-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.65rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+.pinned-chip:hover {
+    border-color: var(--primary);
+    background: rgba(59, 130, 246, 0.08);
+}
+.pinned-chip-name {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pinned-chip-remove {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1;
+    border-radius: 50%;
+}
+.pinned-chip-remove:hover {
+    color: #ef4444;
+}
+
+/* Folder README Box */
+.folder-readme-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.folder-readme-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.85rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.84rem;
+}
+.folder-readme-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+}
+.folder-readme-content {
+    padding: 0.85rem 1.15rem;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    max-height: 350px;
+    overflow-y: auto;
+}
+.folder-readme-content.collapsed {
+    display: none;
+}
+.folder-readme-content h1, .folder-readme-content h2, .folder-readme-content h3 {
+    margin-top: 0.6rem;
+    margin-bottom: 0.35rem;
+    font-weight: 700;
+}
+.folder-readme-content h1 { font-size: 1.25rem; }
+.folder-readme-content h2 { font-size: 1.05rem; }
+.folder-readme-content h3 { font-size: 0.95rem; }
+.folder-readme-content ul, .folder-readme-content ol {
+    padding-left: 1.4rem;
+    margin-bottom: 0.5rem;
+}
+.folder-readme-content code {
+    background: var(--bg-secondary);
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.82rem;
+}
+.folder-readme-content pre {
+    background: var(--bg-secondary);
+    padding: 0.6rem 0.8rem;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+/* Templates Modal */
+.template-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.template-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+}
+.template-card:hover, .template-card.active {
+    border-color: var(--primary);
+    background: rgba(59, 130, 246, 0.08);
+}
+.template-card-icon {
+    font-size: 1.6rem;
+    margin-bottom: 0.35rem;
+}
+.template-card-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+.template-card-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Bundles Grid View */
+.bundles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+    padding: 0.5rem 0;
+}
+.bundle-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer;
+}
+.bundle-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    border-color: var(--primary);
+}

@@ -224,6 +224,10 @@ $bootData = [
                     <span class="nav-icon">🔗</span>
                     <span>Freigaben</span>
                 </button>
+                <button type="button" class="nav-item" data-view="bundles">
+                    <span class="nav-icon">📦</span>
+                    <span>Sammelmappen</span>
+                </button>
                 <button type="button" class="nav-item" data-view="vault">
                     <span class="nav-icon">🔒</span>
                     <span>Tresor</span>
@@ -288,7 +292,9 @@ $bootData = [
                             <div class="dropdown-divider"></div>
                             <button type="button" class="dropdown-item" id="btn-new-folder">📁 Neuer Ordner</button>
                             <button type="button" class="dropdown-item" id="btn-new-text">📝 Neue Textdatei</button>
+                            <button type="button" class="dropdown-item" id="btn-new-from-template">📄 Aus Vorlage erstellen…</button>
                             <button type="button" class="dropdown-item" id="btn-new-voice-memo">🎙️ Sprachnotiz aufnehmen</button>
+                            <button type="button" class="dropdown-item" id="btn-new-speech-dictate">🗣️ Sprach-Diktat (Text sprechen)</button>
                         </div>
                     </div>
                 </div>
@@ -318,6 +324,7 @@ $bootData = [
                     <span id="bulk-count" class="bulk-count">0 ausgewählt</span>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-copy" title="Auswahl kopieren">📋 Kopieren</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-cut" title="Auswahl ausschneiden">✂️ Ausschneiden</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-bundle" title="Ausgewählte Dateien in Sammelmappe ablegen">📦 Sammelmappe</button>
                     <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-rename" title="Auswahl umbenennen">🏷️ Umbenennen</button>
                     <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-merge-pdf" title="Ausgewählte PDFs zusammenführen">📄 PDFs zusammenführen</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-download">📦 ZIP</button>
@@ -345,6 +352,12 @@ $bootData = [
 
             <!-- File & Folder Container -->
             <div id="file-viewport" class="file-viewport">
+                <!-- Pinned Quick-Access Bar -->
+                <div id="pinned-bar" class="pinned-bar hidden"></div>
+
+                <!-- Folder README Banner -->
+                <div id="folder-readme-box" class="folder-readme-box hidden"></div>
+
                 <div id="items-container"></div>
             </div>
         </main>

@@ -1159,6 +1159,11 @@
             return;
         }
 
+        if (state.view === 'bundles') {
+            await loadBundlesView();
+            return;
+        }
+
         try {
             const params = {
                 action: 'list',
@@ -1212,6 +1217,8 @@
 
             renderBreadcrumbs();
             renderItems();
+            renderPinnedBar(data.pinned_items || []);
+            checkAndRenderFolderReadme(state.files);
             pushNavigationState();
         } catch (err) {
             toast(err.message, 'error');
@@ -2243,6 +2250,34 @@
                     </button>
                 `;
             }
+            if (!isTrash && !item.is_group_folder) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="toggle_pin">
+                        ${item.is_pinned ? '📌 Nicht mehr anheften' : '📌 Oben anheften'}
+                    </button>
+                `;
+            }
+            if (!isTrash && !isFolder) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="add_to_bundle">
+                        📦 In Sammelmappe ablegen
+                    </button>
+                `;
+            }
+            if (!isFolder && item.category === 'text' && !isTrash) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="save_as_template">
+                        ⭐ Als Vorlage merken
+                    </button>
+                `;
+            }
+            if (!isFolder && item.category === 'audio' && !isTrash) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="speech_dictate">
+                        🗣️ Audio transkribieren
+                    </button>
+                `;
+            }
             if (['owner', 'write'].includes(state.permission)) {
                 if (isFolder) {
                     itemsHtml += `
@@ -2266,6 +2301,7 @@
                     itemsHtml += `<button type="button" class="dropdown-item" data-ctx-act="rename">✏️ Umbenennen</button>`;
                 }
                 itemsHtml += `<button type="button" class="dropdown-item dropdown-item-danger" data-ctx-act="trash">🗑️ In den Papierkorb</button>`;
+                itemsHtml += `<button type="button" class="dropdown-item text-danger" data-ctx-act="shred">💥 Sicher vernichten (Shredder)</button>`;
             }
         }
 
@@ -2355,7 +2391,9 @@
         html += `
             <button type="button" class="dropdown-item" data-bg-act="new_folder">📁 Neuer Ordner</button>
             <button type="button" class="dropdown-item" data-bg-act="new_text">📝 Neue Textdatei</button>
+            <button type="button" class="dropdown-item" data-bg-act="new_template">📄 Aus Vorlage erstellen…</button>
             <button type="button" class="dropdown-item" data-bg-act="voice_memo">🎙️ Sprachnotiz aufnehmen</button>
+            <button type="button" class="dropdown-item" data-bg-act="speech_dictate">🗣️ Sprach-Diktat (Text sprechen)</button>
             <button type="button" class="dropdown-item" data-bg-act="upload">⬆️ Dateien hochladen</button>
         `;
 
@@ -2377,8 +2415,12 @@
                     $('#btn-new-folder')?.click();
                 } else if (act === 'new_text') {
                     $('#btn-new-text')?.click();
+                } else if (act === 'new_template') {
+                    openTemplatesModal();
                 } else if (act === 'voice_memo') {
                     openVoiceMemoModal();
+                } else if (act === 'speech_dictate') {
+                    openSpeechDictationModal();
                 } else if (act === 'upload') {
                     $('#file-input-multi')?.click();
                 }
@@ -2791,6 +2833,8 @@
         const selectedList = Array.from(state.selected.values());
         const allPdfs = selectedList.length >= 2 && selectedList.every((it) => it.type === 'file' && (it.mime_type === 'application/pdf' || it.name.toLowerCase().endsWith('.pdf')));
         const canRename = !isTrash && count >= 2 && ['owner', 'write'].includes(state.permission);
+        const fileOnlySelected = selectedList.filter((it) => it.type === 'file');
+        $('#btn-bulk-bundle')?.classList.toggle('hidden', isTrash || fileOnlySelected.length === 0);
         $('#btn-bulk-rename')?.classList.toggle('hidden', !canRename);
         $('#btn-bulk-merge-pdf')?.classList.toggle('hidden', isTrash || !allPdfs);
         $('#btn-bulk-copy')?.classList.toggle('hidden', isTrash);
@@ -2805,6 +2849,13 @@
         const items = Array.from(state.selected.values());
         if (items.length >= 2) {
             openBatchRenameModal(items);
+        }
+    });
+
+    $('#btn-bulk-bundle')?.addEventListener('click', () => {
+        const items = Array.from(state.selected.values()).filter((it) => it.type === 'file');
+        if (items.length > 0) {
+            openAddToBundleModal(items);
         }
     });
 
@@ -2888,6 +2939,32 @@
                 } catch (err) {
                     toast(err.message, 'error');
                 }
+                break;
+
+            case 'toggle_pin':
+                try {
+                    const res = await apiPost('toggle_pin', { type: item.type, id: item.id });
+                    toast(res.is_pinned ? 'Element oben angeheftet.' : 'Nicht mehr angeheftet.');
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+                break;
+
+            case 'add_to_bundle':
+                openAddToBundleModal([item]);
+                break;
+
+            case 'save_as_template':
+                await saveFileAsTemplate(item);
+                break;
+
+            case 'speech_dictate':
+                openSpeechDictationModal(item);
+                break;
+
+            case 'shred':
+                openShredModal(item);
                 break;
 
             case 'create_alias':
@@ -3354,6 +3431,16 @@
     $('#btn-new-voice-memo')?.addEventListener('click', () => {
         $('#new-action-menu')?.classList.add('hidden');
         openVoiceMemoModal();
+    });
+
+    $('#btn-new-from-template')?.addEventListener('click', () => {
+        $('#new-action-menu')?.classList.add('hidden');
+        openTemplatesModal();
+    });
+
+    $('#btn-new-speech-dictate')?.addEventListener('click', () => {
+        $('#new-action-menu')?.classList.add('hidden');
+        openSpeechDictationModal();
     });
 
     function openTextEditorModal(fileId, fileName, content, readOnly = false) {
@@ -4573,6 +4660,14 @@
 
                 <audio id="record-audio-preview" controls class="hidden" style="width:100%;max-width:360px;margin:1.25rem auto 0"></audio>
 
+                <div style="margin-top:0.85rem;text-align:left">
+                    <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.82rem;font-weight:600;cursor:pointer">
+                        <input type="checkbox" id="chk-live-transcribe" checked>
+                        <span>🗣️ Gesprochenen Text live mitschreiben (Transkription)</span>
+                    </label>
+                    <textarea id="record-transcript-box" class="input hidden" style="width:100%;height:65px;font-size:0.82rem;margin-top:0.35rem;line-height:1.4" placeholder="Live-Transkription…"></textarea>
+                </div>
+
                 <div style="margin-top:1.25rem;text-align:left">
                     <label style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem">Dateiname</label>
                     <input type="text" class="input" id="record-filename" value="${esc(defaultName)}" style="width:100%">
@@ -4591,6 +4686,33 @@
         let timerInterval = null;
         let secondsElapsed = 0;
         let isRecording = false;
+
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let liveTranscript = '';
+        if (SpeechRec) {
+            try {
+                recognition = new SpeechRec();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'de-DE';
+                recognition.onresult = (event) => {
+                    let interim = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            liveTranscript += event.results[i][0].transcript + ' ';
+                        } else {
+                            interim += event.results[i][0].transcript;
+                        }
+                    }
+                    const box = $('#record-transcript-box');
+                    if (box) {
+                        box.value = (liveTranscript + interim).trim();
+                        box.classList.remove('hidden');
+                    }
+                };
+            } catch (_) {}
+        }
 
         const btnToggle = $('#btn-record-toggle');
         const timerEl = $('#record-timer');
@@ -4614,6 +4736,9 @@
             if (activeVoiceStream) {
                 activeVoiceStream.getTracks().forEach((t) => t.stop());
                 activeVoiceStream = null;
+            }
+            if (recognition) {
+                try { recognition.stop(); } catch (_) {}
             }
         }
 
@@ -4642,6 +4767,17 @@
 
                 mediaRecorder.start(250);
                 isRecording = true;
+
+                if (recognition && $('#chk-live-transcribe')?.checked) {
+                    liveTranscript = '';
+                    const box = $('#record-transcript-box');
+                    if (box) {
+                        box.value = '';
+                        box.classList.remove('hidden');
+                    }
+                    try { recognition.start(); } catch (_) {}
+                }
+
                 btnToggle.classList.add('recording');
                 btnToggle.textContent = '⏹️';
                 btnToggle.title = 'Aufnahme beenden';
@@ -4684,9 +4820,22 @@
                 btnSave.disabled = true;
                 btnSave.textContent = 'Wird gespeichert…';
                 const fileObj = new File([audioBlob], filename, { type: audioBlob.type || 'audio/webm' });
+
+                const transcript = $('#record-transcript-box')?.value.trim();
+                const saveTranscript = $('#chk-live-transcribe')?.checked && transcript;
+                const entriesToUpload = [{ file: fileObj, relativePath: '' }];
+
+                if (saveTranscript) {
+                    const dotIdx = filename.lastIndexOf('.');
+                    const baseName = dotIdx !== -1 ? filename.slice(0, dotIdx) : filename;
+                    const txtName = `${baseName}_transkript.txt`;
+                    const txtObj = new File([new Blob([transcript], { type: 'text/plain;charset=utf-8' })], txtName, { type: 'text/plain' });
+                    entriesToUpload.push({ file: txtObj, relativePath: '' });
+                }
+
                 closeModal();
-                await uploadFileEntries([{ file: fileObj, relativePath: '' }], state.currentFolderId);
-                toast(`Sprachnotiz „${filename}“ erfolgreich gespeichert.`);
+                await uploadFileEntries(entriesToUpload, state.currentFolderId);
+                toast(saveTranscript ? `Sprachnotiz und Transkript gespeichert.` : `Sprachnotiz „${filename}“ erfolgreich gespeichert.`);
             } catch (err) {
                 toast(`Fehler beim Speichern der Sprachnotiz: ${err.message}`, 'error');
             }
@@ -5039,6 +5188,736 @@
                 btnSave.textContent = '✍️ Signierte PDF speichern';
             }
         });
+    }
+
+    // Markdown To HTML Parser for Folder README & Previews
+    function renderMarkdownToHtml(md) {
+        if (!md) return '';
+        let html = esc(md);
+        html = html.replace(/```([\s\S]*?)```/g, (m, p) => `<pre><code>${p.trim()}</code></pre>`);
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        html = html.replace(/\[ \]/g, '⬜');
+        html = html.replace(/\[x\]/gi, '✅');
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        html = html.replace(/^\s*[-*]\s+(.*$)/gim, '<li>$1</li>');
+        html = html.replace(/(<li>[\s\S]*?<\/li>)/gim, '<ul>$1</ul>');
+        html = html.replace(/<\/ul>\s*<ul>/gim, '');
+        html = html.replace(/\n\n/g, '<br><br>');
+        return html;
+    }
+
+    // Check & Render Folder README Banner
+    async function checkAndRenderFolderReadme(files) {
+        const box = $('#folder-readme-box');
+        if (!box) return;
+
+        if (state.view !== 'files') {
+            box.classList.add('hidden');
+            box.innerHTML = '';
+            return;
+        }
+
+        const readmeFile = (files || []).find((f) => !f.is_locked_alias && (/^readme\.(md|txt)$/i.test(f.name) || f.name.toLowerCase() === 'notes.txt'));
+        if (!readmeFile) {
+            box.classList.add('hidden');
+            box.innerHTML = '';
+            return;
+        }
+
+        try {
+            const res = await apiGet({ action: 'read_text', id: readmeFile.id });
+            const isCollapsed = sessionStorage.getItem(`readme_collapsed_${readmeFile.id}`) === '1';
+
+            box.innerHTML = `
+                <div class="folder-readme-header">
+                    <div class="folder-readme-title">
+                        <span>📑</span>
+                        <strong>${esc(readmeFile.name)}</strong>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:0.35rem">
+                        ${['owner', 'write'].includes(state.permission) ? `<button type="button" class="btn btn-ghost btn-xs" id="btn-readme-edit" title="README bearbeiten">✏️ Bearbeiten</button>` : ''}
+                        <button type="button" class="btn btn-ghost btn-xs" id="btn-readme-toggle" title="Ausklappen / Zuklappen">${isCollapsed ? '▲' : '▼'}</button>
+                    </div>
+                </div>
+                <div class="folder-readme-content ${isCollapsed ? 'collapsed' : ''}" id="folder-readme-content">
+                    ${renderMarkdownToHtml(res.content || '')}
+                </div>
+            `;
+            box.classList.remove('hidden');
+
+            $('#btn-readme-toggle')?.addEventListener('click', () => {
+                const cont = $('#folder-readme-content');
+                const btn = $('#btn-readme-toggle');
+                if (!cont || !btn) return;
+                const nowCollapsed = cont.classList.toggle('collapsed');
+                btn.textContent = nowCollapsed ? '▲' : '▼';
+                sessionStorage.setItem(`readme_collapsed_${readmeFile.id}`, nowCollapsed ? '1' : '0');
+            });
+
+            $('#btn-readme-edit')?.addEventListener('click', () => {
+                openTextEditorModal(readmeFile.id, readmeFile.name, res.content || '', !['owner', 'write'].includes(state.permission));
+            });
+        } catch (_) {
+            box.classList.add('hidden');
+        }
+    }
+
+    // Pinned Items Bar
+    function renderPinnedBar(pinnedItems) {
+        const bar = $('#pinned-bar');
+        if (!bar) return;
+
+        if (!pinnedItems || pinnedItems.length === 0 || state.view === 'trash') {
+            bar.classList.add('hidden');
+            bar.innerHTML = '';
+            return;
+        }
+
+        let html = `<div class="pinned-bar-label">📌 Angeheftet:</div>`;
+        pinnedItems.forEach((item) => {
+            const icon = item.type === 'folder' ? '📁' : '📄';
+            html += `
+                <div class="pinned-chip" data-pin-type="${item.type}" data-pin-id="${item.id}" title="${esc(item.name)} (Klick zum Öffnen)">
+                    <span>${icon}</span>
+                    <span class="pinned-chip-name">${esc(item.name)}</span>
+                    <button type="button" class="pinned-chip-remove" data-unpin-type="${item.type}" data-unpin-id="${item.id}" title="Lösen">×</button>
+                </div>
+            `;
+        });
+
+        bar.innerHTML = html;
+        bar.classList.remove('hidden');
+
+        $$('.pinned-chip', bar).forEach((chip) => {
+            chip.addEventListener('click', async (e) => {
+                if (e.target.classList.contains('pinned-chip-remove')) return;
+                const type = chip.dataset.pinType;
+                const id = Number(chip.dataset.pinId);
+                if (type === 'folder') {
+                    state.view = 'files';
+                    state.currentFolderId = id;
+                    state.search = '';
+                    $('#search-input').value = '';
+                    setActiveNavView('files');
+                    loadCurrentView();
+                } else {
+                    let fl = (state.files || []).find((f) => f.id === id);
+                    if (!fl) {
+                        fl = { id: id, name: chip.querySelector('.pinned-chip-name')?.textContent || 'Datei' };
+                    }
+                    openFileModal(fl);
+                }
+            });
+        });
+
+        $$('.pinned-chip-remove', bar).forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const type = btn.dataset.unpinType;
+                const id = Number(btn.dataset.unpinId);
+                try {
+                    await apiPost('toggle_pin', { type, id });
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+        });
+    }
+
+    // Document Templates Modal
+    function openTemplatesModal() {
+        const predefined = [
+            {
+                id: 'meeting',
+                icon: '📝',
+                title: 'Meeting-Notizen',
+                desc: 'Agenda, Teilnehmer, Beschlüsse',
+                filename: `Meeting_${new Date().toISOString().slice(0, 10)}.md`,
+                content: `# Meeting-Notizen\n**Datum:** ${new Date().toLocaleDateString('de-DE')}\n**Teilnehmer:** \n\n## Agenda\n- Punkt 1\n- Punkt 2\n\n## Beschlüsse & Aufgaben\n- [ ] Aufgabe 1 (@Person)\n- [ ] Aufgabe 2\n`,
+            },
+            {
+                id: 'invoice',
+                icon: '🧾',
+                title: 'Rechnungsvorlage',
+                desc: 'Posten, Beträge, Zahlungsziel',
+                filename: `Rechnung_${new Date().getFullYear()}-001.md`,
+                content: `# RECHNUNG\n**Rechnungs-Nr.:** RE-${new Date().getFullYear()}-001\n**Datum:** ${new Date().toLocaleDateString('de-DE')}\n**Fällig bis:** 14 Tage\n\n**Empfänger:**\nFirma / Name\nStraße 1\n12345 Stadt\n\n| Pos. | Beschreibung | Menge | Einzelpreis | Gesamt |\n|---|---|---|---|---|\n| 1 | Beratung / Dienstleistung | 1 | 150,00 € | 150,00 € |\n\n**Gesamtbetrag (netto):** 150,00 €\n`,
+            },
+            {
+                id: 'project',
+                icon: '🚀',
+                title: 'Projekt-Plan & Meilensteine',
+                desc: 'Ziele, Phasen, Meilensteine',
+                filename: 'Projektplan.md',
+                content: `# Projekt: [Projektname]\n**Startdatum:** ${new Date().toLocaleDateString('de-DE')}\n**Status:** In Vorbereitung\n\n## Ziele\n1. Hauptziel definieren\n\n## Meilensteine\n- [ ] Phase 1: Konzeption & Planung\n- [ ] Phase 2: Umsetzung\n- [ ] Phase 3: Testing & Qualitätssicherung\n- [ ] Phase 4: Release & Rollout\n`,
+            },
+            {
+                id: 'todo',
+                icon: '📋',
+                title: 'Wochenplan & To-Do',
+                desc: 'Prioritäten, Aufgabenliste',
+                filename: 'Wochenplan.md',
+                content: `# Wochenplan KW ${Math.ceil((new Date() - new Date(new Date().getFullYear(), 0, 1)) / 86400000 / 7)}\n\n## Höchste Priorität (Must-Do)\n- [ ] \n\n## Laufende Aufgaben\n- [ ] \n\n## Für später\n- [ ] \n`,
+            },
+            {
+                id: 'env',
+                icon: '⚙️',
+                title: 'Konfiguration (.env)',
+                desc: 'Umgebungsvariablen-Vorlage',
+                filename: '.env.example',
+                content: `# Environment Configuration\nAPP_NAME=PureCloud\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_URL=https://runready.cloud\n\nDB_CONNECTION=sqlite\nAPI_KEY=\n`,
+            },
+            {
+                id: 'html',
+                icon: '🌐',
+                title: 'HTML5 Starterseite',
+                desc: 'Moderne HTML5 Boilerplate',
+                filename: 'index.html',
+                content: `<!DOCTYPE html>\n<html lang="de">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Meine Webseite</title>\n</head>\n<body>\n    <h1>Willkommen!</h1>\n    <p>Erstellt mit PureCloud Dokument-Vorlagen.</p>\n</body>\n</html>\n`,
+            },
+        ];
+
+        let custom = [];
+        try {
+            custom = JSON.parse(localStorage.getItem('purecloud_custom_templates') || '[]');
+        } catch (_) {}
+
+        const allTemplates = [...predefined, ...custom];
+        let selectedTpl = allTemplates[0];
+
+        const renderTplGrid = () => {
+            return allTemplates.map((t) => `
+                <div class="template-card ${t.id === selectedTpl.id ? 'active' : ''}" data-tpl-id="${t.id}">
+                    <div class="template-card-icon">${t.icon || '📄'}</div>
+                    <div class="template-card-title">${esc(t.title)}</div>
+                    <div class="template-card-desc">${esc(t.desc || '')}</div>
+                </div>
+            `).join('');
+        };
+
+        openModal('📄 Neues Dokument aus Vorlage erstellen', `
+            <div style="display:flex;flex-direction:column;gap:1rem">
+                <div class="template-grid" id="tpl-grid">
+                    ${renderTplGrid()}
+                </div>
+
+                <div class="form-group" style="margin-bottom:0.5rem">
+                    <label style="font-weight:600;font-size:0.85rem">Dateiname</label>
+                    <input type="text" class="input" id="tpl-filename" value="${esc(selectedTpl.filename)}" required>
+                </div>
+
+                <div class="form-group">
+                    <label style="font-weight:600;font-size:0.85rem">Vorschau / Inhalt</label>
+                    <textarea class="input editor-textarea" id="tpl-content" style="height:150px;font-family:monospace;font-size:0.82rem">${esc(selectedTpl.content)}</textarea>
+                </div>
+
+                <div style="display:flex;justify-content:flex-end;gap:0.5rem">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-tpl-cancel">Abbrechen</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="btn-tpl-create">💾 Datei erstellen & öffnen</button>
+                </div>
+            </div>
+        `, true);
+
+        const updateSelection = (t) => {
+            selectedTpl = t;
+            $$('.template-card').forEach((c) => c.classList.toggle('active', c.dataset.tplId === t.id));
+            const fnInp = $('#tpl-filename');
+            const contInp = $('#tpl-content');
+            if (fnInp) fnInp.value = t.filename;
+            if (contInp) contInp.value = t.content;
+        };
+
+        $$('.template-card').forEach((card) => {
+            card.addEventListener('click', () => {
+                const found = allTemplates.find((x) => x.id === card.dataset.tplId);
+                if (found) updateSelection(found);
+            });
+        });
+
+        $('#btn-tpl-cancel')?.addEventListener('click', closeModal);
+        $('#btn-tpl-create')?.addEventListener('click', async () => {
+            const name = ($('#tpl-filename')?.value || 'Dokument.md').trim();
+            const content = $('#tpl-content')?.value || '';
+            try {
+                closeModal();
+                const res = await apiPost('create_text', {
+                    folder_id: state.currentFolderId,
+                    name: name,
+                    content: content,
+                });
+                toast(`Dokument „${name}“ erfolgreich aus Vorlage erstellt.`);
+                loadCurrentView();
+                if (res.file_id) {
+                    openTextEditorModal(res.file_id, name, content, false);
+                }
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+    }
+
+    async function saveFileAsTemplate(file) {
+        try {
+            const res = await apiGet({ action: 'read_text', id: file.id });
+            let custom = [];
+            try {
+                custom = JSON.parse(localStorage.getItem('purecloud_custom_templates') || '[]');
+            } catch (_) {}
+            custom.push({
+                id: 'custom_' + Date.now(),
+                icon: '⭐',
+                title: file.name,
+                desc: 'Eigene benutzerdefinierte Vorlage',
+                filename: file.name,
+                content: res.content || '',
+            });
+            localStorage.setItem('purecloud_custom_templates', JSON.stringify(custom));
+            toast(`Datei „${file.name}“ als Vorlage gemerkt.`);
+        } catch (err) {
+            toast(`Fehler beim Speichern der Vorlage: ${err.message}`, 'error');
+        }
+    }
+
+    // Speech-to-Text Dictation Notepad Modal
+    function openSpeechDictationModal(audioFile = null) {
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRec) {
+            toast('Spracherkennung (Web Speech API) wird von diesem Browser nicht unterstützt. Bitte Chrome, Edge oder Safari verwenden.', 'error');
+            return;
+        }
+
+        const defaultName = `Diktat_${new Date().toISOString().slice(0, 10)}.txt`;
+
+        openModal('🗣️ Sprach-Diktat (Speech-to-Text)', `
+            <div style="display:flex;flex-direction:column;gap:1rem">
+                ${audioFile ? `
+                <div style="padding:0.6rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;display:flex;align-items:center;gap:0.5rem">
+                    <span>🎵</span>
+                    <span class="small" style="font-weight:600">${esc(audioFile.name)}</span>
+                    <audio controls src="api.php?action=download&id=${audioFile.id}&inline=1" style="height:32px;margin-left:auto"></audio>
+                </div>
+                ` : ''}
+
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:0.6rem">
+                        <button type="button" class="record-pulse-btn" id="btn-dictate-toggle" title="Diktat starten" style="width:48px;height:48px;font-size:1.3rem">
+                            🎙️
+                        </button>
+                        <div>
+                            <div style="font-weight:600;font-size:0.9rem" id="dictate-status">Klicken Sie auf das Mikrofon, um zu diktieren</div>
+                            <div class="muted small" id="dictate-sub">Sprache wird in Echtzeit in Text umgewandelt</div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:0.35rem">
+                        <label class="small muted">Sprache:</label>
+                        <select class="input" id="dictate-lang" style="padding:0.25rem 0.5rem;font-size:0.8rem">
+                            <option value="de-DE" selected>Deutsch (de-DE)</option>
+                            <option value="en-US">English (en-US)</option>
+                            <option value="fr-FR">Français (fr-FR)</option>
+                            <option value="es-ES">Español (es-ES)</option>
+                            <option value="it-IT">Italiano (it-IT)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <textarea class="input editor-textarea" id="dictate-textarea" placeholder="Hier erscheint Ihr gesprochener Text…" style="height:180px;font-size:0.95rem;line-height:1.5"></textarea>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:0.5rem">
+                        <input type="text" class="input" id="dictate-filename" value="${esc(defaultName)}" style="width:200px">
+                    </div>
+                    <div style="display:flex;gap:0.5rem">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-dictate-clear">Text leeren</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-dictate-save">💾 Als Textdatei speichern</button>
+                    </div>
+                </div>
+            </div>
+        `);
+
+        let isDictating = false;
+        let recognition = null;
+        let accumulatedText = '';
+
+        const btnToggle = $('#btn-dictate-toggle');
+        const statusEl = $('#dictate-status');
+        const textarea = $('#dictate-textarea');
+        const langSelect = $('#dictate-lang');
+
+        function startDictation() {
+            try {
+                recognition = new SpeechRec();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = langSelect.value || 'de-DE';
+
+                recognition.onstart = () => {
+                    isDictating = true;
+                    btnToggle.classList.add('recording');
+                    btnToggle.textContent = '⏹️';
+                    statusEl.textContent = 'Ich höre zu… Bitte sprechen Sie.';
+                };
+
+                recognition.onresult = (e) => {
+                    let interim = '';
+                    for (let i = e.resultIndex; i < e.results.length; ++i) {
+                        if (e.results[i].isFinal) {
+                            accumulatedText += e.results[i][0].transcript + ' ';
+                        } else {
+                            interim += e.results[i][0].transcript;
+                        }
+                    }
+                    textarea.value = (accumulatedText + interim).trim();
+                };
+
+                recognition.onerror = (e) => {
+                    if (e.error !== 'no-speech') {
+                        toast(`Spracherkennungs-Fehler: ${e.error}`, 'error');
+                    }
+                };
+
+                recognition.onend = () => {
+                    if (isDictating) {
+                        try { recognition.start(); } catch (_) {}
+                    } else {
+                        btnToggle.classList.remove('recording');
+                        btnToggle.textContent = '🎙️';
+                        statusEl.textContent = 'Diktat pausiert.';
+                    }
+                };
+
+                recognition.start();
+            } catch (err) {
+                toast(`Fehler beim Starten der Spracherkennung: ${err.message}`, 'error');
+            }
+        }
+
+        function stopDictation() {
+            isDictating = false;
+            if (recognition) {
+                try { recognition.stop(); } catch (_) {}
+                recognition = null;
+            }
+            btnToggle.classList.remove('recording');
+            btnToggle.textContent = '🎙️';
+            statusEl.textContent = 'Diktat beendet.';
+        }
+
+        btnToggle?.addEventListener('click', () => {
+            if (isDictating) {
+                stopDictation();
+            } else {
+                startDictation();
+            }
+        });
+
+        $('#btn-dictate-clear')?.addEventListener('click', () => {
+            accumulatedText = '';
+            textarea.value = '';
+        });
+
+        $('#btn-dictate-save')?.addEventListener('click', async () => {
+            const text = textarea.value.trim();
+            if (!text) {
+                toast('Bitte sprechen Sie zuerst einen Text ein.', 'error');
+                return;
+            }
+            const name = ($('#dictate-filename')?.value || defaultName).trim();
+            stopDictation();
+            try {
+                closeModal();
+                await apiPost('create_text', {
+                    folder_id: state.currentFolderId,
+                    name: name,
+                    content: text,
+                });
+                toast(`Diktat „${name}“ erfolgreich gespeichert.`);
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+    }
+
+    // Secure Shredder Modal (3-Pass Forensic Wipe)
+    function openShredModal(item) {
+        openModal(`💥 Sicher vernichten (Shredder)`, `
+            <div style="display:flex;flex-direction:column;gap:1rem;text-align:center;padding:0.5rem 0">
+                <div style="font-size:3rem">💥</div>
+                <h3 style="margin:0;font-size:1.15rem;font-weight:700">Möchten Sie „${esc(item.name)}“ sicher vernichten?</h3>
+                <div class="alert alert-error" style="text-align:left;font-size:0.85rem;line-height:1.5">
+                    <strong>⚠️ Warnung vor unwiderruflichem Datenverlust:</strong><br>
+                    Diese Aktion löscht nicht nur den Dateieintrag, sondern überschreibt die physikalischen Speicherblöcke auf der Festplatte mehrfach mit Zufallsbytes und binären Nullen (DoD 3-Pass Forensic Wipe). Eine Wiederherstellung ist auch für Datenrettungslabore technisch unmöglich.
+                </div>
+                <div style="display:flex;justify-content:center;gap:0.75rem;margin-top:0.5rem">
+                    <button type="button" class="btn btn-secondary" id="btn-shred-cancel">Abbrechen</button>
+                    <button type="button" class="btn btn-danger" id="btn-shred-confirm">💥 Jetzt endgültig vernichten</button>
+                </div>
+            </div>
+        `);
+
+        $('#btn-shred-cancel')?.addEventListener('click', closeModal);
+        $('#btn-shred-confirm')?.addEventListener('click', async () => {
+            const btn = $('#btn-shred-confirm');
+            btn.disabled = true;
+            btn.textContent = 'Überschreibe Daten & schreddere…';
+            try {
+                await apiPost('shred', { type: item.type, id: item.id });
+                closeModal();
+                toast(`„${item.name}“ wurde sicher vernichtet und physikalisch überschrieben.`);
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+                btn.disabled = false;
+                btn.textContent = '💥 Jetzt endgültig vernichten';
+            }
+        });
+    }
+
+    // Add To Bundle Modal
+    async function openAddToBundleModal(files) {
+        if (!files || files.length === 0) return;
+        const fileIds = files.map((f) => f.id);
+
+        try {
+            const res = await apiGet({ action: 'get_bundles' });
+            const bundles = res.bundles || [];
+
+            let optionsHtml = '';
+            bundles.forEach((b) => {
+                optionsHtml += `<option value="${b.id}">${esc(b.name)} (${b.item_count} Dateien)</option>`;
+            });
+
+            openModal(`📦 In Sammelmappe ablegen (${files.length} Datei${files.length > 1 ? 'en' : ''})`, `
+                <div style="display:flex;flex-direction:column;gap:1rem">
+                    <p class="muted small">
+                        Sammelmappen bündeln Dateien aus beliebigen Ordnern für schnellen Zugriff oder gemeinsamen Download, ohne Speicherplatz zu duplizieren.
+                    </p>
+
+                    ${bundles.length > 0 ? `
+                    <div style="border:1px solid var(--border);border-radius:8px;padding:0.85rem;background:var(--bg-secondary)">
+                        <label style="font-weight:600;font-size:0.85rem;display:block;margin-bottom:0.35rem">Zu bestehender Sammelmappe hinzufügen</label>
+                        <div style="display:flex;gap:0.5rem">
+                            <select class="input" id="sel-existing-bundle" style="flex:1">
+                                ${optionsHtml}
+                            </select>
+                            <button type="button" class="btn btn-primary btn-sm" id="btn-add-existing-bundle">Hinzufügen</button>
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <div style="border:1px solid var(--border);border-radius:8px;padding:0.85rem;background:var(--bg-secondary)">
+                        <label style="font-weight:600;font-size:0.85rem;display:block;margin-bottom:0.35rem">Neue Sammelmappe anlegen</label>
+                        <div class="form-group" style="margin-bottom:0.5rem">
+                            <input type="text" class="input" id="inp-new-bundle-name" placeholder="Name der Mappe, z. B. Steuererklärung 2026">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0.75rem">
+                            <input type="text" class="input" id="inp-new-bundle-desc" placeholder="Optionale Beschreibung">
+                        </div>
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-create-new-bundle">Mappe erstellen & Dateien hinzufügen</button>
+                    </div>
+                </div>
+            `);
+
+            $('#btn-add-existing-bundle')?.addEventListener('click', async () => {
+                const bId = Number($('#sel-existing-bundle')?.value);
+                if (!bId) return;
+                try {
+                    closeModal();
+                    await apiPost('add_to_bundle', { bundle_id: bId, file_ids: fileIds });
+                    toast(`${files.length} Datei(en) zur Sammelmappe hinzugefügt.`);
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+
+            $('#btn-create-new-bundle')?.addEventListener('click', async () => {
+                const name = ($('#inp-new-bundle-name')?.value || '').trim();
+                if (!name) {
+                    toast('Bitte vergeben Sie einen Namen für die Sammelmappe.', 'error');
+                    return;
+                }
+                const desc = ($('#inp-new-bundle-desc')?.value || '').trim();
+                try {
+                    closeModal();
+                    await apiPost('create_bundle', { name, description: desc, file_ids: fileIds });
+                    toast(`Sammelmappe „${name}“ mit ${files.length} Datei(en) erstellt.`);
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+        } catch (err) {
+            toast(`Fehler beim Laden der Sammelmappen: ${err.message}`, 'error');
+        }
+    }
+
+    // Bundles View & Drawer
+    async function loadBundlesView() {
+        state.view = 'bundles';
+        setActiveNavView('bundles');
+        $('#pinned-bar')?.classList.add('hidden');
+        $('#folder-readme-box')?.classList.add('hidden');
+        $('#folder-write-actions')?.classList.add('hidden');
+        $('#trash-toolbar')?.classList.add('hidden');
+
+        const breadcrumbsEl = $('#breadcrumbs');
+        if (breadcrumbsEl) {
+            breadcrumbsEl.innerHTML = `<span class="breadcrumb-item active">📦 Sammelmappen</span>`;
+        }
+
+        const container = $('#items-container');
+        if (!container) return;
+        container.innerHTML = `<div style="text-align:center;padding:2rem"><span class="spinner"></span> Lade Sammelmappen…</div>`;
+
+        try {
+            const res = await apiGet({ action: 'get_bundles' });
+            const bundles = res.bundles || [];
+
+            if (bundles.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📦</div>
+                        <h3>Noch keine Sammelmappen angelegt</h3>
+                        <p class="muted small">
+                            Markieren Sie beliebige Dateien in verschiedenen Ordnern und wählen Sie „In Sammelmappe ablegen“, um eine thematische Sammlung zu erstellen.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            let cardsHtml = '';
+            bundles.forEach((b) => {
+                cardsHtml += `
+                    <div class="bundle-card" data-bundle-id="${b.id}">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem">
+                            <span style="font-size:1.8rem">📦</span>
+                            <span class="badge" style="font-size:0.75rem">${b.item_count} Datei${b.item_count == 1 ? '' : 'en'}</span>
+                        </div>
+                        <div style="font-weight:700;font-size:1rem;margin-bottom:0.25rem">${esc(b.name)}</div>
+                        ${b.description ? `<p class="muted small" style="margin-bottom:0.5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.description)}</p>` : ''}
+                        <div class="muted small" style="display:flex;justify-content:space-between;margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border)">
+                            <span>${formatBytes(b.total_bytes || 0)}</span>
+                            <span>${esc((b.created_at || '').slice(0, 10))}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = `
+                <div style="padding:0.5rem 0">
+                    <div class="bundles-grid">${cardsHtml}</div>
+                </div>
+            `;
+
+            $$('.bundle-card', container).forEach((card) => {
+                card.addEventListener('click', () => {
+                    const bId = Number(card.dataset.bundleId);
+                    openBundleDetailsModal(bId);
+                });
+            });
+        } catch (err) {
+            toast(`Fehler beim Laden der Sammelmappen: ${err.message}`, 'error');
+        }
+    }
+
+    async function openBundleDetailsModal(bundleId) {
+        try {
+            const res = await apiGet({ action: 'get_bundle', id: bundleId });
+            const bundle = res.data.bundle;
+            const files = res.data.files || [];
+
+            let rowsHtml = '';
+            files.forEach((f) => {
+                rowsHtml += `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.5rem">
+                            <span style="cursor:pointer;font-weight:600" data-bundle-open-file="${f.id}">📄 ${esc(f.name)}</span>
+                        </td>
+                        <td style="padding:0.5rem;text-align:right" class="muted small">${formatBytes(f.size_bytes)}</td>
+                        <td style="padding:0.5rem;text-align:right">
+                            <button type="button" class="btn btn-ghost btn-xs text-danger" data-bundle-remove-file="${f.id}" title="Aus Mappe entfernen">✕</button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            openModal(`📦 ${esc(bundle.name)}`, `
+                <div style="display:flex;flex-direction:column;gap:1rem">
+                    ${bundle.description ? `<p class="muted small">${esc(bundle.description)}</p>` : ''}
+
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap">
+                        <span class="muted small">${files.length} Datei(en) in dieser Mappe</span>
+                        <div style="display:flex;gap:0.5rem">
+                            ${files.length > 0 ? `
+                            <button type="button" class="btn btn-primary btn-sm" id="btn-bundle-download-zip">⬇️ Als ZIP herunterladen</button>
+                            ` : ''}
+                            <button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-bundle-delete">🗑️ Mappe auflösen</button>
+                        </div>
+                    </div>
+
+                    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:350px;overflow-y:auto">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+                            <tbody>
+                                ${rowsHtml || '<tr><td colspan="3" style="text-align:center;padding:1.5rem" class="muted">Keine Dateien in dieser Sammelmappe.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `, true);
+
+            $$('[data-bundle-open-file]').forEach((el) => {
+                el.addEventListener('click', () => {
+                    const fId = Number(el.dataset.bundleOpenFile);
+                    const fileObj = files.find((f) => f.id === fId);
+                    if (fileObj) {
+                        closeModal();
+                        openFileModal(fileObj);
+                    }
+                });
+            });
+
+            $$('[data-bundle-remove-file]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const fId = Number(btn.dataset.bundleRemoveFile);
+                    try {
+                        await apiPost('remove_from_bundle', { bundle_id: bundleId, file_id: fId });
+                        toast('Datei aus der Sammelmappe entfernt.');
+                        closeModal();
+                        openBundleDetailsModal(bundleId);
+                    } catch (err) {
+                        toast(err.message, 'error');
+                    }
+                });
+            });
+
+            $('#btn-bundle-download-zip')?.addEventListener('click', () => {
+                const minimal = files.map((x) => ({ type: 'file', id: x.id, name: x.name }));
+                window.location.href = `api.php?action=download_zip&items=${encodeURIComponent(JSON.stringify(minimal))}`;
+            });
+
+            $('#btn-bundle-delete')?.addEventListener('click', async () => {
+                if (!confirm(`Sammelmappe „${bundle.name}“ auflösen? Die physischen Dateien bleiben dabei in ihren Ordnern erhalten.`)) return;
+                try {
+                    await apiPost('delete_bundle', { id: bundleId });
+                    closeModal();
+                    toast('Sammelmappe aufgelöst.');
+                    loadBundlesView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+        } catch (err) {
+            toast(err.message, 'error');
+        }
     }
 
     // ZIP Inspector & Extractor Modal

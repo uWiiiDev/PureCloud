@@ -850,6 +850,55 @@ try {
             $alias = FileManager::createAlias($userId, $targetType, $targetId, $targetFolderId, $name);
             jsonResponse(['ok' => true, 'alias' => $alias]);
 
+        case 'toggle_pin':
+            $type = (string)($input['type'] ?? 'file');
+            $id   = (int)($input['id'] ?? 0);
+            $isPinned = FileManager::togglePin($userId, $type, $id);
+            jsonResponse(['ok' => true, 'is_pinned' => $isPinned]);
+
+        case 'get_pinned':
+            $items = FileManager::getPinnedItems($userId);
+            jsonResponse(['ok' => true, 'items' => $items]);
+
+        case 'shred':
+            $type = (string)($input['type'] ?? 'file');
+            $id   = (int)($input['id'] ?? 0);
+            $res  = FileManager::shredItem($userId, $type, $id);
+            jsonResponse(['ok' => true, 'result' => $res]);
+
+        case 'get_bundles':
+            $bundles = FileManager::getBundles($userId);
+            jsonResponse(['ok' => true, 'bundles' => $bundles]);
+
+        case 'create_bundle':
+            $name = (string)($input['name'] ?? 'Neue Sammelmappe');
+            $desc = isset($input['description']) ? (string)$input['description'] : null;
+            $fileIds = is_array($input['file_ids'] ?? null) ? $input['file_ids'] : [];
+            $res = FileManager::createBundle($userId, $name, $desc, $fileIds);
+            jsonResponse(['ok' => true, 'bundle' => $res]);
+
+        case 'get_bundle':
+            $id = (int)($_GET['id'] ?? $input['id'] ?? 0);
+            $res = FileManager::getBundleDetails($userId, $id);
+            jsonResponse(['ok' => true, 'data' => $res]);
+
+        case 'add_to_bundle':
+            $bundleId = (int)($input['bundle_id'] ?? 0);
+            $fileIds = is_array($input['file_ids'] ?? null) ? $input['file_ids'] : [];
+            $added = FileManager::addFilesToBundle($userId, $bundleId, $fileIds);
+            jsonResponse(['ok' => true, 'added' => $added]);
+
+        case 'remove_from_bundle':
+            $bundleId = (int)($input['bundle_id'] ?? 0);
+            $fileId   = (int)($input['file_id'] ?? 0);
+            $res = FileManager::removeFileFromBundle($userId, $bundleId, $fileId);
+            jsonResponse(['ok' => true, 'removed' => $res]);
+
+        case 'delete_bundle':
+            $bundleId = (int)($input['id'] ?? 0);
+            $res = FileManager::deleteBundle($userId, $bundleId);
+            jsonResponse(['ok' => true, 'deleted' => $res]);
+
         case 'admin_find_duplicates':
             if ($user['role'] !== 'admin') {
                 throw new RuntimeException('Nur für Administratoren.');
