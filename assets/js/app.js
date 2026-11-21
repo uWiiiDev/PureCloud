@@ -293,28 +293,158 @@
         return data;
     }
 
-    // Modal System
+    // Modal System & Browser History Integration
+    let lastHistoryState = null;
+    let isRestoringHistory = false;
+    let activeUploadCount = 0;
+
+    function pushNavigationState() {
+        if (!state.user || isRestoringHistory) return;
+
+        const curFolder = state.currentFolderId;
+        const curView = state.view;
+        const curSearch = state.search || '';
+
+        if (lastHistoryState && lastHistoryState.view === curView && lastHistoryState.folderId === curFolder && lastHistoryState.search === curSearch) {
+            return;
+        }
+
+        const newState = {
+            view: curView,
+            folderId: curFolder,
+            search: curSearch,
+            modal: false,
+        };
+
+        history.pushState(newState, '');
+        lastHistoryState = newState;
+    }
+
+    function initBrowserHistory() {
+        if (!state.user) return;
+        // 1. Initial trap state at the base to intercept accidental browser back exits
+        history.replaceState({ isRootTrap: true, view: 'files', folderId: null, search: '' }, '');
+        // 2. Active state
+        const initState = {
+            view: state.view || 'files',
+            folderId: state.currentFolderId || null,
+            search: state.search || '',
+            modal: false,
+        };
+        history.pushState(initState, '');
+        lastHistoryState = initState;
+    }
+
     function openModal(title, htmlContent, large = false) {
         const backdrop = $('#modal-backdrop');
         const dialog = $('#modal-dialog');
+        const wasHidden = backdrop.classList.contains('hidden');
+
         $('#modal-title').textContent = title;
         $('#modal-body').innerHTML = htmlContent;
         dialog.classList.toggle('modal-lg', large);
         backdrop.classList.remove('hidden');
+
+        if (wasHidden && state.user) {
+            history.pushState({ ...(lastHistoryState || { view: state.view, folderId: state.currentFolderId, search: '' }), modal: true }, '');
+        }
     }
 
-    function closeModal() {
-        $('#modal-backdrop').classList.add('hidden');
+    function closeModal(fromHistory = false) {
+        const backdrop = $('#modal-backdrop');
+        if (backdrop.classList.contains('hidden')) return;
+
+        backdrop.classList.add('hidden');
         $('#modal-body').innerHTML = '';
+
+        if (!fromHistory && history.state?.modal) {
+            history.back();
+        }
     }
 
-    $('#modal-close')?.addEventListener('click', closeModal);
+    $('#modal-close')?.addEventListener('click', () => closeModal());
     $('#modal-backdrop')?.addEventListener('click', (e) => {
         if (e.target.id === 'modal-backdrop') closeModal();
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !$('#modal-backdrop').classList.contains('hidden')) {
             closeModal();
+        }
+    });
+
+    window.addEventListener('popstate', (e) => {
+        // 1. Close mobile sidebar if open
+        if ($('#sidebar')?.classList.contains('open')) {
+            setMobileSidebarOpen(false);
+            if (lastHistoryState) history.pushState(lastHistoryState, '');
+            return;
+        }
+
+        // 2. Close context menu if open
+        if (!$('#context-menu')?.classList.contains('hidden')) {
+            closeContextMenu();
+            if (lastHistoryState) history.pushState(lastHistoryState, '');
+            return;
+        }
+
+        // 3. Close open modal if active
+        const modalBackdrop = $('#modal-backdrop');
+        if (modalBackdrop && !modalBackdrop.classList.contains('hidden')) {
+            closeModal(true);
+            return;
+        }
+
+        // 4. Base root trap reached: prevent leaving the cloud accidentally!
+        if (!e.state || e.state.isRootTrap) {
+            if (state.view !== 'files' || state.currentFolderId !== null || (state.search || '') !== '') {
+                // Navigate back to main files root
+                isRestoringHistory = true;
+                state.view = 'files';
+                state.currentFolderId = null;
+                state.search = '';
+                $('#search-input').value = '';
+                setActiveNavView('files');
+                loadCurrentView().finally(() => {
+                    isRestoringHistory = false;
+                    const rootState = { view: 'files', folderId: null, search: '', modal: false };
+                    history.pushState(rootState, '');
+                    lastHistoryState = rootState;
+                });
+            } else {
+                // Already on root level -> show informative toast and stay safely in PureCloud
+                toast('Sie befinden sich bereits auf der obersten Ebene von PureCloud.', 'info');
+                const stayState = { view: 'files', folderId: null, search: '', modal: false };
+                history.pushState(stayState, '');
+                lastHistoryState = stayState;
+            }
+            return;
+        }
+
+        // 5. Restore view / folder / search from history state
+        const targetView = e.state.view || 'files';
+        const targetFolder = e.state.folderId !== undefined ? e.state.folderId : null;
+        const targetSearch = e.state.search || '';
+
+        if (targetView !== state.view || targetFolder !== state.currentFolderId || targetSearch !== (state.search || '')) {
+            isRestoringHistory = true;
+            state.view = targetView;
+            state.currentFolderId = targetFolder;
+            state.search = targetSearch;
+            $('#search-input').value = targetSearch;
+            setActiveNavView(state.view);
+            lastHistoryState = { view: state.view, folderId: state.currentFolderId, search: state.search, modal: false };
+            loadCurrentView().finally(() => {
+                isRestoringHistory = false;
+            });
+        }
+    });
+
+    // Warn before closing tab or navigating away while uploads are running
+    window.addEventListener('beforeunload', (e) => {
+        if (activeUploadCount > 0) {
+            e.preventDefault();
+            e.returnValue = '';
+            return '';
         }
     });
 
@@ -344,6 +474,7 @@
 
     function showAuthScreen() {
         state.user = null;
+        lastHistoryState = null;
         $('#app-shell').classList.add('hidden');
         $('#auth-screen').classList.remove('hidden');
         $('#setup-card')?.classList.add('hidden');
@@ -356,6 +487,7 @@
         $('#twofactor-card')?.classList.add('hidden');
         $('#app-shell').classList.remove('hidden');
         updateUserSidebar();
+        initBrowserHistory();
         loadCurrentView();
     }
 
@@ -636,13 +768,18 @@
         loadCurrentView();
     });
 
+    function setActiveNavView(viewName) {
+        $$('.sidebar-nav .nav-item').forEach((b) => {
+            b.classList.toggle('active', (b.dataset.view || 'files') === viewName);
+        });
+    }
+
     // Sidebar Navigation & Drag-and-Drop Targets (Tresor, Papierkorb, Hauptordner)
     $$('.sidebar-nav .nav-item').forEach((btn) => {
         const navView = btn.dataset.view || 'files';
 
         btn.addEventListener('click', () => {
-            $$('.sidebar-nav .nav-item').forEach((b) => b.classList.remove('active'));
-            btn.classList.add('active');
+            setActiveNavView(navView);
             state.view = navView;
             state.currentFolderId = null;
             state.search = '';
@@ -829,6 +966,7 @@
 
             renderBreadcrumbs();
             renderItems();
+            pushNavigationState();
         } catch (err) {
             toast(err.message, 'error');
         }
@@ -3446,6 +3584,7 @@
                     loadMySharesView();
                 });
             });
+            pushNavigationState();
         } catch (err) {
             toast(err.message, 'error');
         }
@@ -3697,6 +3836,7 @@
         let uploadedBytes = 0;
         let successCount = 0;
 
+        activeUploadCount++;
         try {
             for (let i = 0; i < entries.length; i++) {
                 const { file, relativePath } = entries[i];
@@ -3747,6 +3887,7 @@
                 }
             }
         } finally {
+            activeUploadCount = Math.max(0, activeUploadCount - 1);
             hideDropOverlay();
             panel.classList.add('hidden');
             fill.style.width = '0%';
@@ -4927,6 +5068,7 @@
                     openEditUserModal(u);
                 });
             });
+            pushNavigationState();
         } catch (err) {
             toast(err.message, 'error');
         }
