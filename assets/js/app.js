@@ -526,7 +526,7 @@
             debounceTimer = setTimeout(async () => {
                 try {
                     const res = await apiGet({ action: 'quick_search', q });
-                    renderSpotlightResults(res.data);
+                    renderSpotlightResults(res.data, q);
                 } catch (err) {
                     console.warn('Quick search failed:', err);
                 }
@@ -558,7 +558,7 @@
         }
     }
 
-    function renderSpotlightResults(data) {
+    function renderSpotlightResults(data, query = '') {
         const resultsBox = $('#spotlight-results', spotlightEl);
         if (!resultsBox) return;
 
@@ -571,7 +571,9 @@
         spotlightActiveIdx = spotlightItems.length > 0 ? 0 : -1;
 
         if (spotlightItems.length === 0) {
-            resultsBox.innerHTML = '<p class="muted small" style="padding:1rem;text-align:center;margin:0">Keine passenden Einträge gefunden.</p>';
+            resultsBox.innerHTML = query.trim().length === 0
+                ? '<p class="muted small" style="padding:1rem;text-align:center;margin:0">Tippen Sie einen Begriff ein, um blitzschnell zu suchen…</p>'
+                : '<p class="muted small" style="padding:1rem;text-align:center;margin:0">Keine passenden Einträge gefunden.</p>';
             return;
         }
 

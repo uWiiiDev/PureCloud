@@ -2224,7 +2224,8 @@ class FileManager
         }
 
         $fileStmt = $pdo->prepare("
-            SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, updated_at
+            SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, updated_at,
+                   (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count
             FROM files
             WHERE owner_id = :uid AND deleted_at IS NULL AND (name LIKE :q ESCAPE '\\' OR notes LIKE :q ESCAPE '\\' OR color_tag = :exactQ)
             ORDER BY name COLLATE NOCASE ASC
@@ -2233,7 +2234,7 @@ class FileManager
         $fileStmt->execute([':uid' => $userId, ':q' => $like, ':exactQ' => strtolower($q)]);
         $files = [];
         foreach ($fileStmt->fetchAll(PDO::FETCH_ASSOC) as $fl) {
-            $fl['category'] = self::detectCategory($fl['mime_type'], $fl['name']);
+            $fl['category'] = self::categorizeFile($fl['name'], $fl['mime_type']);
             $fl['folder_name'] = $fl['folder_id'] ? self::getFolderPathString($userId, (int)$fl['folder_id']) : '📁 Dateien (Hauptverzeichnis)';
             $files[] = $fl;
         }
