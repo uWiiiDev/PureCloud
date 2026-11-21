@@ -3967,19 +3967,15 @@
         `, file.category === 'pdf' || file.category === 'image' || file.category === 'video');
 
         $('#modal-btn-ocr')?.addEventListener('click', () => {
-            closeModal();
             openOcrModal(file);
         });
         $('#modal-btn-optimize')?.addEventListener('click', () => {
-            closeModal();
             openImageOptimizeModal(file);
         });
         $('#modal-btn-exif')?.addEventListener('click', () => {
-            closeModal();
             openExifModal(file);
         });
         $('#modal-btn-sign')?.addEventListener('click', () => {
-            closeModal();
             openPdfSignModal(file);
         });
         $('#modal-btn-vault')?.addEventListener('click', () => {
@@ -5533,7 +5529,9 @@
             const scaledVp = page.getViewport({ scale });
 
             const pdfCanvas = $('#pdf-sign-canvas');
+            if (!pdfCanvas) return;
             const pdfCtx = pdfCanvas.getContext('2d');
+            if (!pdfCtx) return;
             pdfCanvas.width = scaledVp.width;
             pdfCanvas.height = scaledVp.height;
 
