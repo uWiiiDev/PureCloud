@@ -1964,6 +1964,7 @@
                             ? `<img loading="lazy" src="api.php?action=thumb&id=${item.id}" alt="">`
                             : `<span>${isFolder ? '📁' : fileIcon(item)}</span>`
                         }
+                        ${item.is_locked ? '<span class="grid-locked-corner" title="Schreibgeschützt / Gesperrt">🔒</span>' : ''}
                     </div>
                     <div class="grid-title" data-open="${key}" title="${esc(item.name)}">
                         ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(item.color_tag)}"></span>` : ''}

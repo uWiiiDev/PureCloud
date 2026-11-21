@@ -194,7 +194,7 @@ class FileManager
 
         if ($view === 'favorites') {
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) AS share_count,
                        (SELECT COUNT(*) FROM files fl WHERE fl.folder_id = f.id AND fl.is_encrypted = 1 AND fl.deleted_at IS NULL) AS encrypted_count,
                        1 AS is_favorite
@@ -207,7 +207,7 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type, fl.created_at, fl.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) AS share_count,
                        (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        1 AS is_favorite
@@ -232,7 +232,7 @@ class FileManager
 
         if ($view === 'trash') {
             $fStmt = $pdo->prepare('
-                SELECT id, name, parent_id, color_tag, notes, deleted_at, created_at, updated_at
+                SELECT id, name, parent_id, color_tag, notes, is_locked, alias_target_id, deleted_at, created_at, updated_at
                 FROM folders
                 WHERE owner_id = :uid AND deleted_at IS NOT NULL
                 ORDER BY deleted_at DESC, name COLLATE NOCASE ASC
@@ -241,7 +241,7 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare('
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, is_locked, alias_target_id, alias_target_type,
                        (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
                        deleted_at, created_at, updated_at
                 FROM files
@@ -264,7 +264,7 @@ class FileManager
 
         if ($view === 'vault') {
             $fileStmt = $pdo->prepare('
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, is_locked, alias_target_id, alias_target_type,
                        (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
                        deleted_at, created_at, updated_at
                 FROM files
@@ -288,14 +288,14 @@ class FileManager
         if ($view === 'shared' && $folderId === null) {
             // Top-level items shared with $userId directly or via group_shares
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        s.permission AS shared_permission, u.display_name AS owner_name, NULL AS group_name
                 FROM user_shares s
                 JOIN folders f ON f.id = s.item_id AND s.item_type = 'folder'
                 JOIN users u ON u.id = f.owner_id
                 WHERE s.target_user_id = :uid AND f.deleted_at IS NULL
                 UNION ALL
-                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        gs.permission AS shared_permission, u.display_name AS owner_name, g.name AS group_name
                 FROM group_shares gs
                 JOIN group_members gm ON gm.group_id = gs.target_group_id
@@ -309,7 +309,7 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type,
                        fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        s.permission AS shared_permission, u.display_name AS owner_name
                 FROM user_shares s
@@ -317,7 +317,7 @@ class FileManager
                 JOIN users u ON u.id = fl.owner_id
                 WHERE s.target_user_id = :uid AND fl.deleted_at IS NULL
                 UNION ALL
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type,
                        fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        gs.permission AS shared_permission, u.display_name AS owner_name
                 FROM group_shares gs
@@ -345,7 +345,7 @@ class FileManager
         if ($search !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
             $fStmt = $pdo->prepare("
-                SELECT id, name, parent_id, color_tag, notes, created_at, updated_at
+                SELECT id, name, parent_id, color_tag, notes, is_locked, alias_target_id, created_at, updated_at
                 FROM folders
                 WHERE owner_id = :uid AND deleted_at IS NULL AND name LIKE :q ESCAPE '\\'
                 ORDER BY name COLLATE NOCASE ASC
@@ -355,7 +355,7 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, is_locked, alias_target_id, alias_target_type,
                        (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
                        created_at, updated_at
                 FROM files
@@ -380,7 +380,7 @@ class FileManager
         // Virtual "Gruppenordner" container directory ($folderId === -1)
         if ($folderId === -1) {
             $gfStmt = $pdo->prepare("
-                SELECT f.id, f.name, -1 AS parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, -1 AS parent_id, f.is_group_folder, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) AS share_count,
                        (SELECT COUNT(*) FROM files fl WHERE fl.folder_id = f.id AND fl.is_encrypted = 1 AND fl.deleted_at IS NULL) AS encrypted_count,
                        GROUP_CONCAT(g.name, ', ') AS group_name
@@ -455,7 +455,7 @@ class FileManager
         if ($folderId === null) {
             // Own personal root folders
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'folder' AND us.item_id = f.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'folder' AND gsc.item_id = f.id) AS share_count,
@@ -488,6 +488,8 @@ class FileManager
                     'is_group_root'     => true,
                     'color_tag'         => null,
                     'notes'             => null,
+                    'is_locked'         => false,
+                    'alias_target_id'   => null,
                     'share_count'       => 0,
                     'encrypted_count'   => 0,
                     'group_name'        => $gfCount . ' Ordner',
@@ -500,7 +502,7 @@ class FileManager
             }
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type,
                        fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'file' AND us.item_id = fl.id) +
@@ -512,7 +514,7 @@ class FileManager
             $fileStmt->execute([':uid' => $effectiveOwnerId]);
         } else {
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.is_locked, f.alias_target_id, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'folder' AND us.item_id = f.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'folder' AND gsc.item_id = f.id) AS share_count,
@@ -526,7 +528,7 @@ class FileManager
             $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders, $pinFolders);
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.is_locked, fl.alias_target_id, fl.alias_target_type,
                        fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'file' AND us.item_id = fl.id) +
