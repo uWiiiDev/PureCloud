@@ -1368,6 +1368,27 @@ html[data-theme="light"] .alert-success {
         display: none !important;
     }
 
+    .th-col-tag {
+        width: 36px !important;
+        text-align: center;
+        padding-left: 0.2rem !important;
+        padding-right: 0.2rem !important;
+    }
+    .cell-tag {
+        width: 36px !important;
+        text-align: center;
+        padding-left: 0.2rem !important;
+        padding-right: 0.2rem !important;
+    }
+    .color-tag-pill {
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+    .color-tag-pill .tag-label {
+        display: none;
+    }
+
     .file-viewport {
         padding: 0.75rem 0.75rem 2.5rem;
     }
@@ -1432,6 +1453,26 @@ html[data-theme="light"] .alert-success {
 .color-tag-dot.color-green { background: #22c55e; }
 .color-tag-dot.color-blue { background: #3b82f6; }
 .color-tag-dot.color-purple { background: #a855f7; }
+
+.color-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    font-weight: 500;
+    padding: 0.15rem 0.45rem;
+    border-radius: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text);
+    white-space: nowrap;
+}
+.color-tag-pill .color-tag-dot {
+    margin-right: 0;
+}
+.cell-tag {
+    white-space: nowrap;
+}
 
 .color-picker-bar {
     display: flex;

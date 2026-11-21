@@ -1107,6 +1107,13 @@
                 const db = String(b.updated_at || '');
                 const diff = da.localeCompare(db) * dir;
                 if (diff !== 0) return diff;
+            } else if (state.sortBy === 'tag') {
+                const ta = String(a.color_tag || '');
+                const tb = String(b.color_tag || '');
+                if (ta !== '' && tb === '') return -1 * dir;
+                if (ta === '' && tb !== '') return 1 * dir;
+                const diff = ta.localeCompare(tb) * dir;
+                if (diff !== 0) return diff;
             }
             return String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }) * dir;
         };
@@ -1483,6 +1490,15 @@
             </button>
         `).join('');
 
+        const colorTagNames = {
+            red: 'Rot',
+            orange: 'Orange',
+            yellow: 'Gelb',
+            green: 'Grün',
+            blue: 'Blau',
+            purple: 'Lila',
+        };
+
         let html = `
             <div class="file-table-wrap">
                 <table class="file-table">
@@ -1500,6 +1516,11 @@
                                     ${isFiltered ? `<button type="button" class="th-filter-btn active" id="btn-th-filter-reset" title="Filter zurücksetzen">✕</button>` : ''}
                                     <div id="th-filter-menu" class="th-filter-menu ${state.filterMenuOpen ? '' : 'hidden'}">${filterMenuHtml}</div>
                                 </div>
+                            </th>
+                            <th class="th-col-tag" style="width:85px">
+                                <span class="th-sort-btn ${state.sortBy === 'tag' ? 'active' : ''}" data-sort-col="tag" title="Nach Farb-Tag sortieren">
+                                    Tag ${arrow('tag')}
+                                </span>
                             </th>
                             <th style="width:110px">
                                 <span class="th-sort-btn ${state.sortBy === 'size' ? 'active' : ''}" data-sort-col="size" title="Nach Dateigröße sortieren">
@@ -1519,7 +1540,7 @@
         if (allItems.length === 0) {
             html += `
                 <tr>
-                    <td colspan="4" class="empty-cell">
+                    <td colspan="5" class="empty-cell">
                         Keine Einträge für den Filter <strong>${esc(activeFilterSummary())}</strong> gefunden.
                         <button type="button" class="btn btn-ghost btn-sm" id="btn-empty-filter-reset" style="margin-left:0.5rem">Filter zurücksetzen</button>
                     </td>
@@ -1565,7 +1586,6 @@
                                     : `<div class="item-icon">${isFolder ? '📁' : fileIcon(item)}</div>`
                                 }
                                 <div class="item-name-wrap">
-                                    ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(item.color_tag)}"></span>` : ''}
                                     <span class="item-name">${esc(item.name)}</span>
                                     ${item.version_count > 0 ? `<span class="item-version-badge" data-action="versions" title="Revisionsverlauf (${item.version_count} Vorversionen)">v${item.version_count + 1}</span>` : ''}
                                     ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
@@ -1573,6 +1593,14 @@
                                 </div>
                             </div>
                         </div>
+                    </td>
+                    <td class="cell-tag">
+                        ${item.color_tag ? `
+                            <span class="color-tag-pill color-${esc(item.color_tag)}" title="Tag: ${esc(colorTagNames[item.color_tag] || item.color_tag)}">
+                                <span class="color-tag-dot color-${esc(item.color_tag)}"></span>
+                                <span class="tag-label">${esc(colorTagNames[item.color_tag] || item.color_tag)}</span>
+                            </span>
+                        ` : ''}
                     </td>
                     <td class="muted" style="white-space:nowrap">${isFolder ? '—' : formatBytes(item.size_bytes)}</td>
                     <td class="muted small hide-mobile">${esc((item.updated_at || '').replace('T', ' ').slice(0, 16))}</td>
