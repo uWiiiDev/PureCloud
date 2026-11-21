@@ -431,6 +431,22 @@ try {
             $info   = FileManager::inspectZip($userId, $fileId);
             jsonResponse(['ok' => true] + $info);
 
+        case 'zip_stream_entry':
+            $fileId    = (int)($_GET['id'] ?? 0);
+            $entryName = (string)($_GET['entry'] ?? '');
+            $download  = !empty($_GET['download']);
+            FileManager::streamZipEntry($userId, $fileId, $entryName, $download);
+            break;
+
+        case 'zip_extract_single':
+            $fileId    = (int)($input['file_id'] ?? 0);
+            $entryName = (string)($input['entry'] ?? '');
+            $targetId  = isset($input['target_folder_id']) && $input['target_folder_id'] !== '' && $input['target_folder_id'] !== null
+                ? (int)$input['target_folder_id']
+                : null;
+            $res = FileManager::extractSingleZipEntry($userId, $fileId, $entryName, $targetId);
+            jsonResponse(['ok' => true] + $res);
+
         case 'zip_extract':
             $fileId   = (int)($input['file_id'] ?? 0);
             $targetId = isset($input['target_folder_id']) && $input['target_folder_id'] !== '' && $input['target_folder_id'] !== null

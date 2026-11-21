@@ -1435,7 +1435,8 @@ class FileManager
 
         $entries = [];
         $totalUncompressed = 0;
-        $maxEntries = min($zip->numFiles, 500);
+        $totalCompressed = 0;
+        $maxEntries = min($zip->numFiles, 3000);
         for ($i = 0; $i < $maxEntries; $i++) {
             $stat = $zip->statIndex($i);
             if (!$stat) {
@@ -1444,21 +1445,192 @@ class FileManager
             $name = $stat['name'];
             $isDir = str_ends_with($name, '/');
             $size = (int)$stat['size'];
+            $compSize = (int)($stat['comp_size'] ?? $size);
+            $mtime = (int)($stat['mtime'] ?? 0);
             $totalUncompressed += $size;
+            $totalCompressed += $compSize;
             $entries[] = [
-                'name'   => $name,
-                'is_dir' => $isDir,
-                'size'   => $size,
+                'index'     => $i,
+                'name'      => $name,
+                'is_dir'    => $isDir,
+                'size'      => $size,
+                'comp_size' => $compSize,
+                'mtime'     => $mtime > 0 ? date('d.m.Y H:i', $mtime) : '',
             ];
         }
         $totalCount = $zip->numFiles;
         $zip->close();
 
         return [
+            'file_id'            => (int)$file['id'],
             'file_name'          => $file['name'],
+            'file_size'          => (int)$file['size_bytes'],
             'total_entries'      => $totalCount,
             'total_uncompressed' => $totalUncompressed,
+            'total_compressed'   => $totalCompressed,
             'entries'            => $entries,
+        ];
+    }
+
+    /**
+     * Streams an individual entry from inside a ZIP archive for preview or download.
+     */
+    public static function streamZipEntry(int $userId, int $fileId, string $entryName, bool $download = false): void
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access) {
+            http_response_code(403);
+            die('Zugriff verweigert.');
+        }
+        $file = $access['file'];
+        if ((int)$file['is_encrypted'] === 1) {
+            http_response_code(400);
+            die('Verschlüsseltes ZIP-Archiv.');
+        }
+        $filePath = Database::FILES_DIR . '/' . basename($file['storage_name']);
+        if (!is_file($filePath)) {
+            http_response_code(404);
+            die('Datei nicht gefunden.');
+        }
+
+        $entryName = str_replace('\\', '/', $entryName);
+        if (str_contains($entryName, '../') || str_starts_with($entryName, '/') || str_ends_with($entryName, '/')) {
+            http_response_code(400);
+            die('Ungültiger Pfad.');
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($filePath) !== true) {
+            http_response_code(500);
+            die('ZIP-Archiv konnte nicht geöffnet werden.');
+        }
+
+        $stat = $zip->statName($entryName);
+        if (!$stat) {
+            $zip->close();
+            http_response_code(404);
+            die('Eintrag im Archiv nicht gefunden.');
+        }
+
+        $stream = $zip->getStream($entryName);
+        if (!$stream) {
+            $zip->close();
+            http_response_code(500);
+            die('Stream konnte nicht gelesen werden.');
+        }
+
+        $ext = strtolower(pathinfo($entryName, PATHINFO_EXTENSION));
+        $mimes = [
+            'pdf'  => 'application/pdf',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png'  => 'image/png',
+            'gif'  => 'image/gif',
+            'webp' => 'image/webp',
+            'svg'  => 'image/svg+xml',
+            'txt'  => 'text/plain; charset=utf-8',
+            'md'   => 'text/markdown; charset=utf-8',
+            'csv'  => 'text/csv; charset=utf-8',
+            'json' => 'application/json; charset=utf-8',
+            'xml'  => 'application/xml',
+            'html' => 'text/html; charset=utf-8',
+            'css'  => 'text/css; charset=utf-8',
+            'js'   => 'text/javascript; charset=utf-8',
+            'mp3'  => 'audio/mpeg',
+            'wav'  => 'audio/wav',
+            'ogg'  => 'audio/ogg',
+            'mp4'  => 'video/mp4',
+            'webm' => 'video/webm',
+        ];
+        $mime = $mimes[$ext] ?? 'application/octet-stream';
+        $baseName = basename($entryName);
+        $disposition = $download ? 'attachment' : 'inline';
+
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . (int)$stat['size']);
+        header('Content-Disposition: ' . $disposition . '; filename="' . rawurlencode($baseName) . '"');
+        header('Cache-Control: private, max-age=86400');
+
+        fpassthru($stream);
+        fclose($stream);
+        $zip->close();
+        exit;
+    }
+
+    /**
+     * Extracts a single entry from a ZIP archive directly into $targetFolderId.
+     */
+    public static function extractSingleZipEntry(int $userId, int $fileId, string $entryName, ?int $targetFolderId): array
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access) {
+            throw new RuntimeException('Kein Zugriff auf dieses ZIP-Archiv.');
+        }
+        $file = $access['file'];
+        if ((int)$file['is_encrypted'] === 1) {
+            throw new RuntimeException('Verschlüsseltes ZIP-Archiv muss zuerst entschlüsselt werden.');
+        }
+
+        $folderAccess = self::canWriteFolder($userId, $targetFolderId);
+        $effectiveOwnerId = $folderAccess['effective_owner_id'];
+
+        $filePath = Database::FILES_DIR . '/' . basename($file['storage_name']);
+        $zip = new ZipArchive();
+        if ($zip->open($filePath) !== true) {
+            throw new RuntimeException('ZIP-Archiv konnte nicht geöffnet werden.');
+        }
+
+        $entryName = str_replace('\\', '/', $entryName);
+        if (str_contains($entryName, '../') || str_starts_with($entryName, '/') || str_ends_with($entryName, '/')) {
+            $zip->close();
+            throw new RuntimeException('Ungültiger Pfad.');
+        }
+
+        $stat = $zip->statName($entryName);
+        if (!$stat) {
+            $zip->close();
+            throw new RuntimeException('Eintrag im Archiv nicht gefunden.');
+        }
+
+        $size = (int)$stat['size'];
+        if (!Auth::canFitBytes($effectiveOwnerId, $size)) {
+            $zip->close();
+            throw new RuntimeException('Nicht genügend freier Speicherplatz (Quota).');
+        }
+
+        $stream = $zip->getStream($entryName);
+        if (!$stream) {
+            $zip->close();
+            throw new RuntimeException('Stream konnte nicht gelesen werden.');
+        }
+
+        $tmpFile = Database::CHUNKS_DIR . '/unzip_single_' . bin2hex(random_bytes(8)) . '.tmp';
+        $out = fopen($tmpFile, 'wb');
+        while (!feof($stream)) {
+            $chunk = fread($stream, 65536);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+            fwrite($out, $chunk);
+        }
+        fclose($stream);
+        fclose($out);
+        $zip->close();
+
+        $baseName = self::sanitizeName(basename($entryName));
+        if ($baseName === '') {
+            $baseName = 'extrahiert_' . time();
+        }
+
+        $saved = self::storeAssembledFile($effectiveOwnerId, $targetFolderId, $baseName, $tmpFile);
+        return [
+            'name'    => $baseName,
+            'file_id' => $saved['id'] ?? null,
+            'size'    => $size,
         ];
     }
 

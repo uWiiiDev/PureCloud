@@ -342,7 +342,8 @@
 
         $('#modal-title').textContent = title;
         $('#modal-body').innerHTML = htmlContent;
-        dialog.classList.toggle('modal-lg', large);
+        dialog.classList.toggle('modal-lg', large === true || large === 'lg');
+        dialog.classList.toggle('modal-xl', large === 'xl');
         backdrop.classList.remove('hidden');
 
         if (wasHidden && state.user) {
@@ -2183,8 +2184,18 @@
             `;
             if (!isFolder && item.category === 'zip' && !item.is_encrypted) {
                 itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="inspect_zip">
+                        🔍 Archiv durchsuchen (ZIP-Inspektor)
+                    </button>
                     <button type="button" class="dropdown-item" data-ctx-act="unzip">
                         📂 ZIP hier entpacken
+                    </button>
+                `;
+            }
+            if (!isFolder && !item.is_encrypted && (item.name.toLowerCase().endsWith('.csv') || item.mime_type === 'text/csv')) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="csv_chart">
+                        📊 Diagramm erstellen (Chart Builder)
                     </button>
                 `;
             }
@@ -2901,6 +2912,14 @@
                 }
                 break;
 
+            case 'inspect_zip':
+                openZipModal(item);
+                break;
+
+            case 'csv_chart':
+                openCsvChartModal(item);
+                break;
+
             case 'rotate_pdf':
                 try {
                     await apiPost('pdf_rotate', { file_id: item.id, angle: 90 });
@@ -3458,12 +3477,21 @@
                 <div class="form-group">
                     <textarea name="content" class="input editor-textarea" ${readOnly ? 'readonly' : ''}>${esc(content)}</textarea>
                 </div>
-                <div style="display:flex;justify-content:space-between;gap:0.5rem">
-                    ${fileId ? `<a class="btn btn-ghost" href="api.php?action=download&id=${fileId}">⬇️ Herunterladen</a>` : '<span></span>'}
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem">
+                    <div style="display:flex;gap:0.5rem;align-items:center">
+                        ${fileId ? `<a class="btn btn-ghost" href="api.php?action=download&id=${fileId}">⬇️ Herunterladen</a>` : ''}
+                        ${fileName.toLowerCase().endsWith('.csv') ? `<button type="button" class="btn btn-ghost" id="btn-switch-to-chart">📊 Als Diagramm visualisieren</button>` : ''}
+                    </div>
                     ${!readOnly ? `<button type="submit" class="btn btn-primary">💾 Speichern</button>` : ''}
                 </div>
             </form>
         `, true);
+
+        $('#btn-switch-to-chart')?.addEventListener('click', () => {
+            const currentContent = $('#text-editor-form textarea[name="content"]')?.value || content;
+            closeModal();
+            openCsvChartModal({ id: fileId, name: fileName }, currentContent);
+        });
 
         $('#text-editor-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -3636,6 +3664,13 @@
             await loadScriptOnce('https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js');
         }
         return window.PDFLib;
+    }
+
+    async function ensureChartJs() {
+        if (!window.Chart) {
+            await loadScriptOnce('https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js');
+        }
+        return window.Chart;
     }
 
     async function openOcrModal(file) {
@@ -5924,36 +5959,237 @@
         }
     }
 
-    // ZIP Inspector & Extractor Modal
+    // Helper: Determine icon for ZIP entry
+    function zipEntryIcon(name, isDir) {
+        if (isDir) return '📁';
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return '🖼️';
+        if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) return '🎬';
+        if (['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'].includes(ext)) return '🎵';
+        if (ext === 'pdf') return '📕';
+        if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '🗜️';
+        if (['csv', 'tsv'].includes(ext)) return '📊';
+        if (['txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'php', 'py', 'sh', 'sql', 'yaml', 'yml', 'log'].includes(ext)) return '📄';
+        return '📎';
+    }
+
+    function isZipEntryPreviewable(name) {
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'pdf', 'mp3', 'wav', 'ogg', 'txt', 'md', 'csv', 'tsv', 'json', 'xml', 'html', 'css', 'js', 'php', 'py', 'sh', 'sql', 'yaml', 'yml', 'log'].includes(ext);
+    }
+
+    // ZIP Inspector & Selective Extractor Modal
     async function openZipModal(file) {
         try {
             const res = await apiGet({ action: 'zip_inspect', id: file.id });
-            const rows = (res.entries || []).slice(0, 200).map((e) => `
-                <tr>
-                    <td>${e.is_dir ? '📁' : '📄'} ${esc(e.name)}</td>
-                    <td class="muted" style="text-align:right">${e.is_dir ? '—' : formatBytes(e.size)}</td>
-                </tr>
-            `).join('');
+            const allEntries = res.entries || [];
+            const fileEntriesCount = allEntries.filter(e => !e.is_dir).length;
+            const dirEntriesCount = allEntries.filter(e => e.is_dir).length;
+            const savings = res.total_uncompressed > 0 && res.file_size
+                ? Math.max(0, Math.round((1 - (res.file_size / res.total_uncompressed)) * 100))
+                : 0;
 
-            openModal(`ZIP-Archiv: ${file.name}`, `
-                <p class="muted small" style="margin-top:0">
-                    ${res.total_entries} Einträge · Entpackte Gesamtgröße: <strong>${formatBytes(res.total_uncompressed)}</strong>
-                </p>
-                <div class="file-table-wrap" style="max-height:320px;overflow-y:auto;margin-bottom:1rem">
-                    <table class="file-table">
-                        <thead><tr><th>Pfad im Archiv</th><th style="text-align:right">Größe</th></tr></thead>
-                        <tbody>${rows || '<tr><td colspan="2" class="empty-cell">Archiv ist leer.</td></tr>'}</tbody>
+            let currentFilter = 'all'; // 'all' | 'files' | 'dirs'
+            let currentSearch = '';
+
+            openModal(`🔍 ZIP-Inspektor: ${file.name}`, `
+                <div class="zip-stats-bar">
+                    <span class="zip-stat-pill">📦 <strong>${res.total_entries}</strong> Einträge (${fileEntriesCount} Dateien, ${dirEntriesCount} Ordner)</span>
+                    <span class="zip-stat-pill">💾 Entpackt: <strong>${formatBytes(res.total_uncompressed)}</strong></span>
+                    ${res.file_size ? `<span class="zip-stat-pill">🗜️ Archiv: <strong>${formatBytes(res.file_size)}</strong></span>` : ''}
+                    ${savings > 0 ? `<span class="zip-stat-pill" style="color:var(--success)">⚡ <strong>${savings}%</strong> Ersparnis</span>` : ''}
+                </div>
+
+                <div class="zip-toolbar">
+                    <div class="zip-search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="zip-search-input" class="input" placeholder="Im Archiv suchen (z. B. .png, config)...">
+                    </div>
+                    <div class="zip-filter-chips">
+                        <button type="button" class="zip-filter-btn active" data-filter="all">Alle (${allEntries.length})</button>
+                        <button type="button" class="zip-filter-btn" data-filter="files">Dateien (${fileEntriesCount})</button>
+                        <button type="button" class="zip-filter-btn" data-filter="dirs">Ordner (${dirEntriesCount})</button>
+                    </div>
+                </div>
+
+                <div id="zip-preview-container" class="zip-preview-panel hidden">
+                    <div class="zip-preview-header">
+                        <span id="zip-preview-title">Vorschau</span>
+                        <div style="display:flex;gap:0.4rem;align-items:center">
+                            <button type="button" class="btn btn-ghost btn-sm" id="btn-zip-preview-copy" title="Text in Zwischenablage kopieren">📋 Kopieren</button>
+                            <button type="button" class="btn btn-ghost btn-sm" id="btn-zip-preview-close" title="Schließen">✕</button>
+                        </div>
+                    </div>
+                    <div id="zip-preview-content"></div>
+                </div>
+
+                <div class="zip-entries-table-wrap">
+                    <table class="zip-table">
+                        <thead>
+                            <tr>
+                                <th>Name / Pfad</th>
+                                <th style="text-align:right">Größe</th>
+                                <th style="text-align:center">Datum</th>
+                                <th style="text-align:right">Aktionen</th>
+                            </tr>
+                        </thead>
+                        <tbody id="zip-entries-tbody"></tbody>
                     </table>
                 </div>
-                <div style="display:flex;justify-content:space-between;gap:0.5rem">
-                    <a class="btn btn-ghost" href="api.php?action=download&id=${file.id}">⬇️ ZIP herunterladen</a>
-                    <button type="button" class="btn btn-primary" id="btn-confirm-unzip">📂 Jetzt im aktuellen Ordner entpacken</button>
+
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem">
+                    <a class="btn btn-ghost" href="api.php?action=download&id=${file.id}">⬇️ Ganzes ZIP herunterladen</a>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-unzip">📂 Komplettes Archiv hier entpacken</button>
                 </div>
-            `, true);
+            `, 'xl');
+
+            const tbody = $('#zip-entries-tbody');
+            const searchInput = $('#zip-search-input');
+            const filterBtns = $$('.zip-filter-btn');
+            const previewPanel = $('#zip-preview-container');
+            const previewTitle = $('#zip-preview-title');
+            const previewContent = $('#zip-preview-content');
+            const btnPreviewCopy = $('#btn-zip-preview-copy');
+            const btnPreviewClose = $('#btn-zip-preview-close');
+            let lastPreviewText = '';
+
+            btnPreviewClose?.addEventListener('click', () => {
+                previewPanel.classList.add('hidden');
+                previewContent.innerHTML = '';
+            });
+
+            btnPreviewCopy?.addEventListener('click', () => {
+                if (lastPreviewText) {
+                    navigator.clipboard?.writeText(lastPreviewText).then(() => {
+                        toast('Inhalt in die Zwischenablage kopiert.');
+                    });
+                }
+            });
+
+            function renderRows() {
+                const query = currentSearch.trim().toLowerCase();
+                const filtered = allEntries.filter(e => {
+                    if (currentFilter === 'files' && e.is_dir) return false;
+                    if (currentFilter === 'dirs' && !e.is_dir) return false;
+                    if (query && !e.name.toLowerCase().includes(query)) return false;
+                    return true;
+                });
+
+                if (filtered.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="empty-cell" style="text-align:center;padding:1.5rem;color:var(--text-muted)">Keine passenden Einträge im Archiv gefunden.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = filtered.slice(0, 500).map(e => {
+                    const icon = zipEntryIcon(e.name, e.is_dir);
+                    const canPreview = !e.is_dir && isZipEntryPreviewable(e.name);
+                    const streamUrl = `api.php?action=zip_stream_entry&id=${file.id}&entry=${encodeURIComponent(e.name)}`;
+                    const dlUrl = `api.php?action=zip_stream_entry&id=${file.id}&entry=${encodeURIComponent(e.name)}&download=1`;
+
+                    return `
+                        <tr>
+                            <td>
+                                <div class="zip-entry-name">
+                                    <span>${icon}</span>
+                                    <span title="${esc(e.name)}">${esc(e.name)}</span>
+                                </div>
+                            </td>
+                            <td class="muted" style="text-align:right;white-space:nowrap">
+                                ${e.is_dir ? '—' : formatBytes(e.size)}
+                            </td>
+                            <td class="muted small" style="text-align:center;white-space:nowrap">
+                                ${esc(e.mtime || '—')}
+                            </td>
+                            <td>
+                                <div class="zip-entry-actions">
+                                    ${canPreview ? `<button type="button" class="btn btn-ghost btn-sm btn-zip-act-preview" data-entry="${esc(e.name)}" title="Vorschau">👁️</button>` : ''}
+                                    ${!e.is_dir ? `<a class="btn btn-ghost btn-sm" href="${dlUrl}" title="Einzeldatei herunterladen" download>⬇️</a>` : ''}
+                                    ${!e.is_dir && ['owner', 'write'].includes(state.permission) ? `<button type="button" class="btn btn-ghost btn-sm btn-zip-act-extract" data-entry="${esc(e.name)}" title="In aktuellen Ordner entpacken">📥</button>` : ''}
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                // Bind preview clicks
+                $$('.btn-zip-act-preview', tbody).forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const entryName = btn.dataset.entry;
+                        const ext = (entryName.split('.').pop() || '').toLowerCase();
+                        const streamUrl = `api.php?action=zip_stream_entry&id=${file.id}&entry=${encodeURIComponent(entryName)}`;
+
+                        previewTitle.textContent = `👁️ Vorschau: ${entryName}`;
+                        previewPanel.classList.remove('hidden');
+                        previewPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+                        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) {
+                            btnPreviewCopy.classList.add('hidden');
+                            previewContent.innerHTML = `<img class="zip-preview-media" src="${streamUrl}" alt="${esc(entryName)}">`;
+                        } else if (ext === 'pdf') {
+                            btnPreviewCopy.classList.add('hidden');
+                            previewContent.innerHTML = `<iframe style="width:100%;height:320px;border:none;border-radius:6px" src="${streamUrl}"></iframe>`;
+                        } else if (['mp3', 'wav', 'ogg'].includes(ext)) {
+                            btnPreviewCopy.classList.add('hidden');
+                            previewContent.innerHTML = `<audio controls autoplay style="width:100%;margin:1rem auto 0.5rem;display:block" src="${streamUrl}"></audio>`;
+                        } else {
+                            // Text / Markdown / Code / JSON / CSV
+                            btnPreviewCopy.classList.remove('hidden');
+                            previewContent.innerHTML = `<div class="muted small" style="padding:1rem;text-align:center">Lade Datei-Inhalt…</div>`;
+                            try {
+                                const resp = await fetch(streamUrl);
+                                const txt = await resp.text();
+                                lastPreviewText = txt;
+                                previewContent.innerHTML = `<pre class="zip-preview-text">${esc(txt.slice(0, 100000))}${txt.length > 100000 ? '\n\n… (gekürzt)' : ''}</pre>`;
+                            } catch (err) {
+                                previewContent.innerHTML = `<div class="text-danger small" style="padding:0.75rem">Fehler beim Laden: ${esc(err.message)}</div>`;
+                            }
+                        }
+                    });
+                });
+
+                // Bind single extract clicks
+                $$('.btn-zip-act-extract', tbody).forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const entryName = btn.dataset.entry;
+                        btn.disabled = true;
+                        btn.textContent = '…';
+                        try {
+                            const res = await apiPost('zip_extract_single', {
+                                file_id: file.id,
+                                entry: entryName,
+                                target_folder_id: state.currentFolderId,
+                            });
+                            toast(`„${res.name}“ erfolgreich in diesen Ordner entpackt.`);
+                            btn.textContent = '✓';
+                            loadCurrentView();
+                        } catch (err) {
+                            toast(err.message, 'error');
+                            btn.disabled = false;
+                            btn.textContent = '📥';
+                        }
+                    });
+                });
+            }
+
+            renderRows();
+
+            searchInput?.addEventListener('input', (e) => {
+                currentSearch = e.target.value;
+                renderRows();
+            });
+
+            filterBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    filterBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentFilter = btn.dataset.filter;
+                    renderRows();
+                });
+            });
 
             $('#btn-confirm-unzip')?.addEventListener('click', async (e) => {
                 e.target.disabled = true;
-                e.target.textContent = 'Entpacke…';
+                e.target.textContent = 'Entpacke alle Dateien…';
                 try {
                     const ext = await apiPost('zip_extract', { file_id: file.id, target_folder_id: state.currentFolderId });
                     closeModal();
@@ -5962,12 +6198,521 @@
                 } catch (err) {
                     toast(err.message, 'error');
                     e.target.disabled = false;
-                    e.target.textContent = '📂 Jetzt im aktuellen Ordner entpacken';
+                    e.target.textContent = '📂 Komplettes Archiv hier entpacken';
                 }
             });
         } catch (err) {
             toast(err.message, 'error');
         }
+    }
+
+    // ==========================================================================
+    // CSV Parsing & No-Code Chart Builder
+    // ==========================================================================
+
+    function parseCsvString(csvText, customDelimiter = '') {
+        let delimiter = customDelimiter;
+        if (!delimiter) {
+            const firstLines = csvText.split(/\r?\n/).slice(0, 5).filter(l => l.trim().length > 0);
+            const counts = { ';': 0, ',': 0, '\t': 0, '|': 0 };
+            for (const line of firstLines) {
+                for (const delim of [';', ',', '\t', '|']) {
+                    counts[delim] += (line.split(delim).length - 1);
+                }
+            }
+            let maxCount = -1;
+            delimiter = ',';
+            for (const [delim, count] of Object.entries(counts)) {
+                if (count > maxCount) {
+                    maxCount = count;
+                    delimiter = delim;
+                }
+            }
+            if (maxCount <= 0) delimiter = ',';
+        }
+
+        const rows = [];
+        let currentRow = [];
+        let currentField = '';
+        let inQuotes = false;
+        let i = 0;
+        const len = csvText.length;
+
+        while (i < len) {
+            const char = csvText[i];
+            const nextChar = csvText[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    currentField += '"';
+                    i += 2;
+                    continue;
+                }
+                inQuotes = !inQuotes;
+                i++;
+                continue;
+            }
+
+            if (!inQuotes && char === delimiter) {
+                currentRow.push(currentField.trim());
+                currentField = '';
+                i++;
+                continue;
+            }
+
+            if (!inQuotes && (char === '\r' || char === '\n')) {
+                if (char === '\r' && nextChar === '\n') {
+                    i++;
+                }
+                currentRow.push(currentField.trim());
+                if (currentRow.length > 0 && currentRow.some(c => c !== '')) {
+                    rows.push(currentRow);
+                }
+                currentRow = [];
+                currentField = '';
+                i++;
+                continue;
+            }
+
+            currentField += char;
+            i++;
+        }
+
+        if (currentField !== '' || currentRow.length > 0) {
+            currentRow.push(currentField.trim());
+            if (currentRow.some(c => c !== '')) {
+                rows.push(currentRow);
+            }
+        }
+
+        return { delimiter, rows };
+    }
+
+    function parseNumericValue(val) {
+        if (typeof val === 'number') return val;
+        if (!val || typeof val !== 'string') return NaN;
+        let s = val.trim();
+        s = s.replace(/[$€£¥%]/g, '').trim();
+        // European format: 1.234,56
+        if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(s)) {
+            s = s.replace(/\./g, '').replace(',', '.');
+        } else if (/^-?\d+(,\d+)?$/.test(s)) {
+            s = s.replace(',', '.');
+        } else if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(s)) {
+            // US format: 1,234.56
+            s = s.replace(/,/g, '');
+        }
+        const num = parseFloat(s);
+        return isNaN(num) ? NaN : num;
+    }
+
+    let activeCsvChart = null;
+
+    async function openCsvChartModal(file, rawContent = null) {
+        let content = rawContent;
+        if (content === null) {
+            try {
+                const res = await apiGet({ action: 'read_text', id: file.id });
+                content = res.content || '';
+            } catch (err) {
+                toast(`Fehler beim Lesen der CSV: ${err.message}`, 'error');
+                return;
+            }
+        }
+
+        let parsed = parseCsvString(content);
+        if (!parsed.rows || parsed.rows.length < 2) {
+            toast('Die CSV-Datei enthält nicht genügend Datenzeilen für ein Diagramm.', 'error');
+            return;
+        }
+
+        await ensureChartJs();
+
+        let hasHeader = true;
+        let headerRow = parsed.rows[0];
+        let dataRows = parsed.rows.slice(1);
+
+        // Find numeric columns
+        function getNumericColIndices(rows, numCols) {
+            const numeric = [];
+            for (let c = 0; c < numCols; c++) {
+                let validCount = 0;
+                let testedCount = 0;
+                for (const row of rows.slice(0, 30)) {
+                    if (row[c] !== undefined && row[c] !== '') {
+                        testedCount++;
+                        if (!isNaN(parseNumericValue(row[c]))) validCount++;
+                    }
+                }
+                if (testedCount > 0 && (validCount / testedCount) >= 0.6) {
+                    numeric.push(c);
+                }
+            }
+            return numeric;
+        }
+
+        let numCols = headerRow.length;
+        let numericCols = getNumericColIndices(dataRows, numCols);
+
+        // Defaults
+        let selectedX = 0;
+        let selectedY = numericCols.length > 0 ? numericCols[0] : (numCols > 1 ? 1 : 0);
+        let selectedType = 'bar'; // 'bar' | 'horizontalBar' | 'line' | 'area' | 'pie' | 'doughnut' | 'polarArea'
+        let selectedAgg = 'sum'; // 'sum' | 'avg' | 'count' | 'none'
+        let selectedSort = 'val_desc'; // 'val_desc' | 'val_asc' | 'label_asc' | 'none'
+        let selectedLimit = '15'; // '10' | '15' | '25' | '50' | 'all'
+        let selectedPalette = 'neon'; // 'neon' | 'business' | 'sunset' | 'emerald' | 'rainbow'
+
+        const palettes = {
+            neon: ['#3b82f6', '#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#6366f1', '#14b8a6'],
+            business: ['#2563eb', '#0d9488', '#475569', '#0284c7', '#d97706', '#4f46e5', '#059669', '#64748b'],
+            sunset: ['#f97316', '#ef4444', '#f59e0b', '#ec4899', '#e11d48', '#fb923c', '#fdba74', '#ea580c'],
+            emerald: ['#10b981', '#14b8a6', '#059669', '#84cc16', '#22c55e', '#047857', '#a3e635', '#15803d'],
+            rainbow: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef'],
+        };
+
+        openModal(`📊 CSV-Diagramm-Generator: ${file.name}`, `
+            <div class="csv-chart-container">
+                <div class="csv-chart-controls">
+                    <!-- Row 1: Chart Type Selector -->
+                    <div>
+                        <span class="csv-ctrl-label">Diagramm-Typ</span>
+                        <div class="csv-chart-type-bar" id="chart-type-selector">
+                            <button type="button" class="chart-type-chip active" data-type="bar">📊 Balken</button>
+                            <button type="button" class="chart-type-chip" data-type="horizontalBar">📶 Horiz. Balken</button>
+                            <button type="button" class="chart-type-chip" data-type="line">📈 Linien</button>
+                            <button type="button" class="chart-type-chip" data-type="area">📉 Fläche</button>
+                            <button type="button" class="chart-type-chip" data-type="pie">🥧 Torte</button>
+                            <button type="button" class="chart-type-chip" data-type="doughnut">🍩 Donut</button>
+                            <button type="button" class="chart-type-chip" data-type="polarArea">🎯 Polar</button>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Axes, Aggregation, Sorting, Limits -->
+                    <div class="csv-chart-grid-options">
+                        <div>
+                            <label class="csv-ctrl-label" for="csv-sel-x">X-Achse (Kategorie)</label>
+                            <select id="csv-sel-x" class="input" style="height:34px;font-size:0.85rem">
+                                ${headerRow.map((col, idx) => `<option value="${idx}" ${idx === selectedX ? 'selected' : ''}>${esc(col || `Spalte ${idx + 1}`)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="csv-ctrl-label" for="csv-sel-y">Y-Achse (Werte)</label>
+                            <select id="csv-sel-y" class="input" style="height:34px;font-size:0.85rem">
+                                ${headerRow.map((col, idx) => `<option value="${idx}" ${idx === selectedY ? 'selected' : ''}>${esc(col || `Spalte ${idx + 1}`)}${numericCols.includes(idx) ? ' (Zahlen)' : ''}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="csv-ctrl-label" for="csv-sel-agg">Berechnung</label>
+                            <select id="csv-sel-agg" class="input" style="height:34px;font-size:0.85rem">
+                                <option value="sum" selected>∑ Summe</option>
+                                <option value="avg">Ø Durchschnitt</option>
+                                <option value="count"># Anzahl Zeilen</option>
+                                <option value="none">Rohwerte (keine)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="csv-ctrl-label" for="csv-sel-sort">Sortierung & Limit</label>
+                            <div style="display:flex;gap:0.35rem">
+                                <select id="csv-sel-sort" class="input" style="height:34px;font-size:0.85rem;flex:1">
+                                    <option value="val_desc" selected>Höchste zuerst</option>
+                                    <option value="val_asc">Niedrigste zuerst</option>
+                                    <option value="label_asc">Alphabetisch (A-Z)</option>
+                                    <option value="none">Original</option>
+                                </select>
+                                <select id="csv-sel-limit" class="input" style="height:34px;font-size:0.85rem;width:82px">
+                                    <option value="10">Top 10</option>
+                                    <option value="15" selected>Top 15</option>
+                                    <option value="25">Top 25</option>
+                                    <option value="50">Top 50</option>
+                                    <option value="all">Alle</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="csv-ctrl-label" for="csv-sel-palette">Farbschema</label>
+                            <select id="csv-sel-palette" class="input" style="height:34px;font-size:0.85rem">
+                                <option value="neon" selected>🌌 Cyber Neon</option>
+                                <option value="business">💼 Modern Slate</option>
+                                <option value="sunset">🌅 Sunset Warm</option>
+                                <option value="emerald">🌿 Smaragd Grün</option>
+                                <option value="rainbow">🌈 Regenbogen</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Canvas Box -->
+                <div class="csv-chart-canvas-wrap">
+                    <canvas id="csv-chart-canvas"></canvas>
+                </div>
+
+                <!-- Live Stats Bar -->
+                <div class="csv-chart-stats-bar">
+                    <span id="csv-chart-stats-text">Berechne Diagramm…</span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-csv-table">📑 Daten-Tabelle anzeigen</button>
+                </div>
+
+                <!-- Collapsible Data Table Drawer -->
+                <div id="csv-data-table-wrap" class="csv-data-table-toggle-wrap hidden">
+                    <table class="csv-data-table">
+                        <thead>
+                            <tr>${headerRow.map(h => `<th>${esc(h)}</th>`).join('')}</tr>
+                        </thead>
+                        <tbody>
+                            ${dataRows.slice(0, 50).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Action Toolbar -->
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;padding-top:0.25rem">
+                    <div style="display:flex;gap:0.4rem;align-items:center">
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-chart-save-png">💾 In PureCloud speichern</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-chart-download-png">📷 Als PNG herunterladen</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-chart-copy-png">📋 In Zwischenablage kopieren</button>
+                    </div>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-chart-close">Schließen</button>
+                </div>
+            </div>
+        `, 'xl');
+
+        const canvas = $('#csv-chart-canvas');
+        const statsText = $('#csv-chart-stats-text');
+        const tableWrap = $('#csv-data-table-wrap');
+        const btnToggleTable = $('#btn-toggle-csv-table');
+
+        btnToggleTable?.addEventListener('click', () => {
+            const isHidden = tableWrap.classList.toggle('hidden');
+            btnToggleTable.textContent = isHidden ? '📑 Daten-Tabelle anzeigen' : '📑 Tabelle verbergen';
+        });
+
+        function renderChart() {
+            if (activeCsvChart) {
+                try { activeCsvChart.destroy(); } catch (_) {}
+                activeCsvChart = null;
+            }
+
+            const xCol = parseInt($('#csv-sel-x').value, 10);
+            const yCol = parseInt($('#csv-sel-y').value, 10);
+            const agg = $('#csv-sel-agg').value;
+            const sortMode = $('#csv-sel-sort').value;
+            const limitVal = $('#csv-sel-limit').value;
+            const paletteKey = $('#csv-sel-palette').value;
+            const colors = palettes[paletteKey] || palettes.neon;
+
+            const xName = headerRow[xCol] || `Spalte ${xCol + 1}`;
+            const yName = headerRow[yCol] || `Spalte ${yCol + 1}`;
+
+            // Aggregate data
+            let entries = [];
+            if (agg === 'none') {
+                for (const row of dataRows) {
+                    const label = row[xCol] || '';
+                    const val = parseNumericValue(row[yCol]);
+                    if (!isNaN(val) || label) {
+                        entries.push({ label, value: isNaN(val) ? 0 : val });
+                    }
+                }
+            } else {
+                const map = new Map();
+                for (const row of dataRows) {
+                    const label = (row[xCol] || 'Unbekannt').trim();
+                    const val = parseNumericValue(row[yCol]);
+                    if (!map.has(label)) {
+                        map.set(label, { sum: 0, count: 0, validValCount: 0 });
+                    }
+                    const obj = map.get(label);
+                    obj.count++;
+                    if (!isNaN(val)) {
+                        obj.sum += val;
+                        obj.validValCount++;
+                    }
+                }
+
+                for (const [label, data] of map.entries()) {
+                    let finalVal = 0;
+                    if (agg === 'sum') finalVal = data.sum;
+                    else if (agg === 'avg') finalVal = data.validValCount > 0 ? (data.sum / data.validValCount) : 0;
+                    else if (agg === 'count') finalVal = data.count;
+                    entries.push({ label, value: Math.round(finalVal * 100) / 100 });
+                }
+            }
+
+            // Sorting
+            if (sortMode === 'val_desc') {
+                entries.sort((a, b) => b.value - a.value);
+            } else if (sortMode === 'val_asc') {
+                entries.sort((a, b) => a.value - b.value);
+            } else if (sortMode === 'label_asc') {
+                entries.sort((a, b) => a.label.localeCompare(b.label, 'de', { numeric: true }));
+            }
+
+            // Limit
+            const totalAggCount = entries.length;
+            if (limitVal !== 'all') {
+                const maxN = parseInt(limitVal, 10);
+                entries = entries.slice(0, maxN);
+            }
+
+            const labels = entries.map(e => e.label);
+            const values = entries.map(e => e.value);
+            const totalSum = values.reduce((acc, v) => acc + v, 0);
+
+            statsText.textContent = `Zeilen: ${dataRows.length} · Dargestellt: ${entries.length}${totalAggCount > entries.length ? ` von ${totalAggCount}` : ''} Gruppen · Gesamtwert: ${totalSum.toLocaleString('de-DE')}`;
+
+            const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+            const textColor = isDark ? '#e2e8f0' : '#1e293b';
+            const gridColor = isDark ? 'rgba(148, 163, 184, 0.12)' : 'rgba(0, 0, 0, 0.08)';
+
+            // Background & border colors for charts
+            const bgColors = values.map((_, i) => colors[i % colors.length] + 'cc');
+            const borderColors = values.map((_, i) => colors[i % colors.length]);
+
+            let chartType = selectedType;
+            let indexAxis = 'x';
+            let fillArea = false;
+
+            if (selectedType === 'horizontalBar') {
+                chartType = 'bar';
+                indexAxis = 'y';
+            } else if (selectedType === 'area') {
+                chartType = 'line';
+                fillArea = true;
+            }
+
+            const ctx = canvas.getContext('2d');
+            activeCsvChart = new window.Chart(ctx, {
+                type: chartType,
+                data: {
+                    labels,
+                    datasets: [{
+                        label: `${yName} (${agg === 'sum' ? 'Summe' : agg === 'avg' ? 'Durchschnitt' : agg === 'count' ? 'Anzahl' : 'Wert'})`,
+                        data: values,
+                        backgroundColor: (chartType === 'line' && !fillArea)
+                            ? colors[0]
+                            : (fillArea ? colors[0] + '33' : bgColors),
+                        borderColor: (chartType === 'line' || fillArea) ? colors[0] : borderColors,
+                        borderWidth: (chartType === 'line' || fillArea) ? 3 : 1.5,
+                        fill: fillArea,
+                        tension: 0.35,
+                        borderRadius: chartType === 'bar' ? 4 : 0,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis,
+                    animation: { duration: 400 },
+                    plugins: {
+                        legend: {
+                            display: ['pie', 'doughnut', 'polarArea'].includes(chartType),
+                            position: 'bottom',
+                            labels: { color: textColor, boxWidth: 12, font: { size: 11 } },
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => {
+                                    const val = context.parsed[indexAxis === 'y' ? 'x' : 'y'] ?? context.raw ?? 0;
+                                    return ` ${val.toLocaleString('de-DE')}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: ['pie', 'doughnut', 'polarArea'].includes(chartType) ? {} : {
+                        x: {
+                            ticks: { color: textColor, font: { size: 11 }, maxRotation: 45 },
+                            grid: { color: gridColor },
+                        },
+                        y: {
+                            ticks: {
+                                color: textColor,
+                                font: { size: 11 },
+                                callback: (v) => v.toLocaleString('de-DE'),
+                            },
+                            grid: { color: gridColor },
+                        }
+                    }
+                }
+            });
+        }
+
+        renderChart();
+
+        // Bind control events
+        $$('#chart-type-selector .chart-type-chip').forEach(btn => {
+            btn.addEventListener('click', () => {
+                $$('#chart-type-selector .chart-type-chip').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedType = btn.dataset.type;
+                renderChart();
+            });
+        });
+
+        ['#csv-sel-x', '#csv-sel-y', '#csv-sel-agg', '#csv-sel-sort', '#csv-sel-limit', '#csv-sel-palette'].forEach(sel => {
+            $(sel)?.addEventListener('change', renderChart);
+        });
+
+        // Save & Download PNG Actions
+        function getChartBlob() {
+            return new Promise((resolve) => {
+                if (!canvas) return resolve(null);
+                // Create a offscreen canvas with solid background so exported PNG is readable
+                const exportCanvas = document.createElement('canvas');
+                exportCanvas.width = canvas.width;
+                exportCanvas.height = canvas.height;
+                const ectx = exportCanvas.getContext('2d');
+                const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+                ectx.fillStyle = isDark ? '#0f172a' : '#ffffff';
+                ectx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+                ectx.drawImage(canvas, 0, 0);
+                exportCanvas.toBlob((blob) => resolve(blob), 'image/png');
+            });
+        }
+
+        $('#btn-chart-download-png')?.addEventListener('click', async () => {
+            const blob = await getChartBlob();
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${file.name.replace(/\.csv$/i, '')}_diagramm.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            toast('Diagramm heruntergeladen.');
+        });
+
+        $('#btn-chart-copy-png')?.addEventListener('click', async () => {
+            const blob = await getChartBlob();
+            if (!blob) return;
+            try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                toast('Diagramm in die Zwischenablage kopiert.');
+            } catch (err) {
+                toast(`Kopieren nicht unterstützt: ${err.message}`, 'error');
+            }
+        });
+
+        $('#btn-chart-save-png')?.addEventListener('click', async () => {
+            const blob = await getChartBlob();
+            if (!blob) return;
+            const pngName = `${file.name.replace(/\.csv$/i, '')}_diagramm.png`;
+            const fileObj = new File([blob], pngName, { type: 'image/png' });
+            try {
+                toast('Speichere Diagramm in PureCloud…');
+                await uploadFileEntries([{ file: fileObj, relativePath: '' }], state.currentFolderId);
+                toast(`Diagramm „${pngName}“ gespeichert.`);
+                loadCurrentView();
+            } catch (err) {
+                toast(`Fehler beim Speichern: ${err.message}`, 'error');
+            }
+        });
+
+        $('#btn-chart-close')?.addEventListener('click', () => {
+            closeModal();
+        });
     }
 
     // AES-256-GCM Zero-Knowledge Vault Modal (for single File or entire Folder)
