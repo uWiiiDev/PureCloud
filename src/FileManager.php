@@ -2735,7 +2735,7 @@ class FileManager
                 throw new RuntimeException('Keine Berechtigung.');
             }
             $newState = ((int)($access['folder']['is_locked'] ?? 0) === 1) ? 0 : 1;
-            $pdo->prepare("UPDATE folders SET is_locked = :l, updated_at = datetime('now') WHERE id = :id")->execute([':l' => $newState, ':id' => $id]);
+            self::setFolderLockRecursive($pdo, $id, $newState);
             return (bool)$newState;
         } else {
             $access = self::resolveFileAccess($userId, $id);
@@ -2745,6 +2745,24 @@ class FileManager
             $newState = ((int)($access['file']['is_locked'] ?? 0) === 1) ? 0 : 1;
             $pdo->prepare("UPDATE files SET is_locked = :l, updated_at = datetime('now') WHERE id = :id")->execute([':l' => $newState, ':id' => $id]);
             return (bool)$newState;
+        }
+    }
+
+    private static function setFolderLockRecursive(PDO $pdo, int $folderId, int $locked): void
+    {
+        // 1. Update the folder itself
+        $pdo->prepare("UPDATE folders SET is_locked = :l, updated_at = datetime('now') WHERE id = :id")
+            ->execute([':l' => $locked, ':id' => $folderId]);
+
+        // 2. Update all files directly within this folder
+        $pdo->prepare("UPDATE files SET is_locked = :l, updated_at = datetime('now') WHERE folder_id = :fid")
+            ->execute([':l' => $locked, ':fid' => $folderId]);
+
+        // 3. Recursively update all subfolders
+        $subStmt = $pdo->prepare("SELECT id FROM folders WHERE parent_id = :pid AND deleted_at IS NULL");
+        $subStmt->execute([':pid' => $folderId]);
+        foreach ($subStmt->fetchAll(PDO::FETCH_COLUMN) as $subId) {
+            self::setFolderLockRecursive($pdo, (int)$subId, $locked);
         }
     }
 

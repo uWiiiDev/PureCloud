@@ -2935,7 +2935,10 @@
             case 'toggle_lock':
                 try {
                     const res = await apiPost('toggle_lock', { type: item.type, id: item.id });
-                    toast(res.is_locked ? 'Schreibschutz aktiviert.' : 'Schreibschutz aufgehoben.');
+                    toast(res.is_locked
+                        ? (item.type === 'folder' ? 'Schreibschutz für Ordner und alle Inhalte aktiviert.' : 'Schreibschutz aktiviert.')
+                        : (item.type === 'folder' ? 'Schreibschutz für Ordner und alle Inhalte aufgehoben.' : 'Schreibschutz aufgehoben.')
+                    );
                     loadCurrentView();
                 } catch (err) {
                     toast(err.message, 'error');
