@@ -288,6 +288,7 @@ $bootData = [
                             <div class="dropdown-divider"></div>
                             <button type="button" class="dropdown-item" id="btn-new-folder">📁 Neuer Ordner</button>
                             <button type="button" class="dropdown-item" id="btn-new-text">📝 Neue Textdatei</button>
+                            <button type="button" class="dropdown-item" id="btn-new-voice-memo">🎙️ Sprachnotiz aufnehmen</button>
                         </div>
                     </div>
                 </div>

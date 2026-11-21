@@ -206,7 +206,14 @@ try {
                 http_response_code(404);
                 exit;
             }
-            FileManager::serveThumbnail($access['file']);
+            $thumbFile = $access['file'];
+            if (!empty($thumbFile['alias_target_id'])) {
+                $targetAccess = FileManager::resolveFileAccess($userId, (int)$thumbFile['alias_target_id']);
+                if ($targetAccess) {
+                    $thumbFile = $targetAccess['file'];
+                }
+            }
+            FileManager::serveThumbnail($thumbFile);
 
         case 'download':
             $fileId = (int)($_GET['id'] ?? $input['id'] ?? 0);
@@ -217,6 +224,14 @@ try {
                 exit('Datei nicht gefunden oder kein Zugriff.');
             }
             $file = $access['file'];
+            if (!empty($file['alias_target_id'])) {
+                $targetAccess = FileManager::resolveFileAccess($userId, (int)$file['alias_target_id']);
+                if ($targetAccess) {
+                    $file['storage_name'] = $targetAccess['file']['storage_name'];
+                    $file['is_encrypted'] = $targetAccess['file']['is_encrypted'];
+                    $file['mime_type']    = $targetAccess['file']['mime_type'];
+                }
+            }
             $path = Database::FILES_DIR . '/' . basename($file['storage_name']);
 
             // If encrypted and a vault_password is supplied, decrypt on the fly
@@ -807,6 +822,33 @@ try {
                 'ok'   => true,
                 'data' => FileManager::getStorageAnalysis($userId),
             ]);
+
+        case 'toggle_lock':
+            $type = (string)($input['type'] ?? 'file');
+            $id   = (int)($input['id'] ?? 0);
+            $isLocked = FileManager::toggleLock($userId, $type, $id);
+            jsonResponse(['ok' => true, 'is_locked' => $isLocked]);
+
+        case 'get_exif':
+            $id = (int)($_GET['id'] ?? $input['id'] ?? 0);
+            $data = FileManager::getExifData($userId, $id);
+            jsonResponse(['ok' => true, 'data' => $data]);
+
+        case 'strip_exif':
+            $id = (int)($input['id'] ?? 0);
+            $replace = !empty($input['replace']);
+            $res = FileManager::stripExif($userId, $id, $replace);
+            jsonResponse(['ok' => true, 'result' => $res]);
+
+        case 'create_alias':
+            $targetType = (string)($input['target_type'] ?? 'file');
+            $targetId   = (int)($input['target_id'] ?? 0);
+            $targetFolderId = isset($input['target_folder_id']) && $input['target_folder_id'] !== ''
+                ? (int)$input['target_folder_id']
+                : null;
+            $name = isset($input['name']) && trim((string)$input['name']) !== '' ? trim((string)$input['name']) : null;
+            $alias = FileManager::createAlias($userId, $targetType, $targetId, $targetFolderId, $name);
+            jsonResponse(['ok' => true, 'alias' => $alias]);
 
         case 'admin_find_duplicates':
             if ($user['role'] !== 'admin') {

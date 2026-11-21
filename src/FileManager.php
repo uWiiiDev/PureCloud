@@ -550,6 +550,8 @@ class FileManager
                 'is_favorite'       => !empty($favFolders[$fid]) || !empty($r['is_favorite']),
                 'color_tag'         => $r['color_tag'] ?? null,
                 'notes'             => $r['notes'] ?? null,
+                'is_locked'         => (int)($r['is_locked'] ?? 0) === 1,
+                'alias_target_id'   => isset($r['alias_target_id']) && $r['alias_target_id'] !== null ? (int)$r['alias_target_id'] : null,
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'encrypted_count'   => (int)($r['encrypted_count'] ?? 0),
                 'group_name'        => $r['group_name'] ?? null,
@@ -582,6 +584,9 @@ class FileManager
                 'is_favorite'       => !empty($favFiles[$fid]) || !empty($r['is_favorite']),
                 'color_tag'         => $r['color_tag'] ?? null,
                 'notes'             => $r['notes'] ?? null,
+                'is_locked'         => (int)($r['is_locked'] ?? 0) === 1,
+                'alias_target_id'   => isset($r['alias_target_id']) && $r['alias_target_id'] !== null ? (int)$r['alias_target_id'] : null,
+                'alias_target_type' => $r['alias_target_type'] ?? null,
                 'version_count'     => (int)($r['version_count'] ?? 0),
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'shared_permission' => $r['shared_permission'] ?? null,
@@ -686,6 +691,9 @@ class FileManager
                 throw new RuntimeException('Keine Berechtigung zum Umbenennen dieses Ordners.');
             }
             $folder = $access['folder'];
+            if ((int)($folder['is_locked'] ?? 0) === 1) {
+                throw new RuntimeException('Dieser Ordner ist schreibgeschützt (gesperrt). Bitte heben Sie zuerst den Schreibschutz auf.');
+            }
             if ((int)($folder['is_group_folder'] ?? 0) === 1) {
                 throw new RuntimeException('Gruppenordner können nur in der Administration umbenannt werden.');
             }
@@ -711,6 +719,9 @@ class FileManager
                 throw new RuntimeException('Keine Berechtigung zum Umbenennen dieser Datei.');
             }
             $file = $access['file'];
+            if ((int)($file['is_locked'] ?? 0) === 1) {
+                throw new RuntimeException('Diese Datei ist schreibgeschützt (gesperrt). Bitte heben Sie zuerst den Schreibschutz auf.');
+            }
             $ownerId = (int)$file['owner_id'];
             $folderId = $file['folder_id'] !== null ? (int)$file['folder_id'] : null;
 
@@ -753,6 +764,9 @@ class FileManager
                 if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
                     continue;
                 }
+                if ((int)($access['folder']['is_locked'] ?? 0) === 1) {
+                    throw new RuntimeException("Der Ordner „{$access['folder']['name']}“ ist schreibgeschützt (gesperrt).");
+                }
                 if ((int)($access['folder']['is_group_folder'] ?? 0) === 1) {
                     throw new RuntimeException('Gruppenordner können nicht verschoben werden.');
                 }
@@ -772,6 +786,9 @@ class FileManager
                 $access = self::resolveFileAccess($userId, $id);
                 if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
                     continue;
+                }
+                if ((int)($access['file']['is_locked'] ?? 0) === 1) {
+                    throw new RuntimeException("Die Datei „{$access['file']['name']}“ ist schreibgeschützt (gesperrt).");
                 }
                 if ((int)$access['file']['owner_id'] !== $targetOwnerId) {
                     throw new RuntimeException('Dateien können nicht zwischen verschiedenen Eigentümern verschoben werden.');
@@ -955,6 +972,9 @@ class FileManager
             $id   = (int)($item['id'] ?? 0);
             if ($type === 'folder') {
                 $access = self::resolveFolderAccess($userId, $id);
+                if ($access && (int)($access['folder']['is_locked'] ?? 0) === 1) {
+                    throw new RuntimeException("Der Ordner „{$access['folder']['name']}“ ist schreibgeschützt (gesperrt).");
+                }
                 if ($access && (int)($access['folder']['is_group_folder'] ?? 0) === 1) {
                     throw new RuntimeException('Gruppenordner können nur in der Administration gelöscht werden.');
                 }
@@ -964,6 +984,9 @@ class FileManager
                 }
             } elseif ($type === 'file') {
                 $access = self::resolveFileAccess($userId, $id);
+                if ($access && (int)($access['file']['is_locked'] ?? 0) === 1) {
+                    throw new RuntimeException("Die Datei „{$access['file']['name']}“ ist schreibgeschützt (gesperrt).");
+                }
                 if ($access && in_array($access['permission'], ['owner', 'write'], true)) {
                     $stmt = $pdo->prepare("UPDATE files SET deleted_at = datetime('now') WHERE id = :id");
                     $stmt->execute([':id' => $id]);
@@ -2678,5 +2701,215 @@ class FileManager
             'largest_folders' => $largestFolders,
             'largest_files'   => $largestFiles,
         ];
+    }
+
+    public static function toggleLock(int $userId, string $type, int $id): bool
+    {
+        $pdo = Database::get();
+        if ($type === 'folder') {
+            $access = self::resolveFolderAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Berechtigung.');
+            }
+            $newState = ((int)($access['folder']['is_locked'] ?? 0) === 1) ? 0 : 1;
+            $pdo->prepare("UPDATE folders SET is_locked = :l, updated_at = datetime('now') WHERE id = :id")->execute([':l' => $newState, ':id' => $id]);
+            return (bool)$newState;
+        } else {
+            $access = self::resolveFileAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Berechtigung.');
+            }
+            $newState = ((int)($access['file']['is_locked'] ?? 0) === 1) ? 0 : 1;
+            $pdo->prepare("UPDATE files SET is_locked = :l, updated_at = datetime('now') WHERE id = :id")->execute([':l' => $newState, ':id' => $id]);
+            return (bool)$newState;
+        }
+    }
+
+    public static function getExifData(int $userId, int $fileId): array
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access) {
+            throw new RuntimeException('Datei nicht gefunden oder keine Berechtigung.');
+        }
+        $file = $access['file'];
+        $path = Database::FILES_DIR . '/' . basename($file['storage_name']);
+        if (!is_file($path)) {
+            throw new RuntimeException('Physische Datei nicht gefunden.');
+        }
+
+        $exif = @exif_read_data($path, 0, true);
+        if (!$exif) {
+            return [
+                'has_exif' => false,
+                'camera'   => null,
+                'datetime' => null,
+                'gps'      => null,
+                'all_tags' => [],
+            ];
+        }
+
+        $make = $exif['IFD0']['Make'] ?? $exif['EXIF']['Make'] ?? null;
+        $model = $exif['IFD0']['Model'] ?? $exif['EXIF']['Model'] ?? null;
+        $camera = trim(($make ?? '') . ' ' . ($model ?? '')) ?: null;
+
+        $dt = $exif['EXIF']['DateTimeOriginal'] ?? $exif['IFD0']['DateTime'] ?? null;
+
+        $gps = null;
+        if (!empty($exif['GPS']['GPSLatitude']) && !empty($exif['GPS']['GPSLongitude'])) {
+            $lat = self::parseGpsCoordinate($exif['GPS']['GPSLatitude'], $exif['GPS']['GPSLatitudeRef'] ?? 'N');
+            $lon = self::parseGpsCoordinate($exif['GPS']['GPSLongitude'], $exif['GPS']['GPSLongitudeRef'] ?? 'E');
+            if ($lat !== null && $lon !== null) {
+                $gps = [
+                    'latitude'  => round($lat, 6),
+                    'longitude' => round($lon, 6),
+                    'maps_url'  => "https://www.openstreetmap.org/?mlat={$lat}&mlon={$lon}#map=16/{$lat}/{$lon}",
+                ];
+            }
+        }
+
+        $fNumber = $exif['EXIF']['FNumber'] ?? null;
+        $expTime = $exif['EXIF']['ExposureTime'] ?? null;
+        $iso     = $exif['EXIF']['ISOSpeedRatings'] ?? null;
+
+        return [
+            'has_exif' => true,
+            'camera'   => $camera,
+            'datetime' => $dt,
+            'gps'      => $gps,
+            'all_tags' => [
+                'Kamera'        => $camera,
+                'Aufnahmedatum' => $dt,
+                'Blende'        => $fNumber ? "f/$fNumber" : null,
+                'Belichtung'    => $expTime ? "{$expTime}s" : null,
+                'ISO'           => $iso,
+                'Software'      => $exif['IFD0']['Software'] ?? null,
+            ],
+        ];
+    }
+
+    private static function parseGpsCoordinate(array $coord, string $ref): ?float
+    {
+        if (count($coord) < 3) return null;
+        $deg = self::evalGpsFraction($coord[0]);
+        $min = self::evalGpsFraction($coord[1]);
+        $sec = self::evalGpsFraction($coord[2]);
+        if ($deg === null || $min === null || $sec === null) return null;
+        $res = $deg + ($min / 60) + ($sec / 3600);
+        if (strtoupper($ref) === 'S' || strtoupper($ref) === 'W') {
+            $res = -$res;
+        }
+        return $res;
+    }
+
+    private static function evalGpsFraction(string $fraction): ?float
+    {
+        $parts = explode('/', $fraction);
+        if (count($parts) === 2 && (float)$parts[1] != 0) {
+            return (float)$parts[0] / (float)$parts[1];
+        }
+        return is_numeric($fraction) ? (float)$fraction : null;
+    }
+
+    public static function stripExif(int $userId, int $fileId, bool $replaceOriginal): array
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+            throw new RuntimeException('Keine Berechtigung.');
+        }
+        $file = $access['file'];
+        if ((int)($file['is_locked'] ?? 0) === 1 && $replaceOriginal) {
+            throw new RuntimeException('Datei ist schreibgeschützt.');
+        }
+
+        $sourcePath = Database::FILES_DIR . '/' . basename($file['storage_name']);
+        if (!is_file($sourcePath)) {
+            throw new RuntimeException('Quelldatei nicht gefunden.');
+        }
+
+        $imgData = @file_get_contents($sourcePath);
+        if ($imgData === false) {
+            throw new RuntimeException('Konnte Bilddaten nicht lesen.');
+        }
+
+        $im = @imagecreatefromstring($imgData);
+        if (!$im) {
+            throw new RuntimeException('Bildformat wird für Metadatenbereinigung nicht unterstützt.');
+        }
+
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        $tmpClean = Database::CHUNKS_DIR . '/clean_' . bin2hex(random_bytes(8)) . '.' . ($ext ?: 'jpg');
+
+        if ($ext === 'png') {
+            imagepng($im, $tmpClean, 8);
+        } elseif ($ext === 'webp') {
+            imagewebp($im, $tmpClean, 92);
+        } else {
+            imagejpeg($im, $tmpClean, 92);
+        }
+        imagedestroy($im);
+
+        $pdo = Database::get();
+        if ($replaceOriginal) {
+            self::archiveFileVersion($pdo, (int)$file['id'], $file['storage_name'], (int)$file['size_bytes']);
+            $newStorageName = bin2hex(random_bytes(16)) . '.' . ($ext ?: 'jpg');
+            $dest = Database::FILES_DIR . '/' . $newStorageName;
+            rename($tmpClean, $dest);
+            $newSize = filesize($dest);
+            $sha = hash_file('sha256', $dest);
+            $pdo->prepare("UPDATE files SET storage_name = :sn, size_bytes = :sz, sha256 = :sha, updated_at = datetime('now') WHERE id = :id")
+                ->execute([':sn' => $newStorageName, ':sz' => $newSize, ':sha' => $sha, ':id' => $file['id']]);
+            return ['file_id' => (int)$file['id'], 'name' => $file['name'], 'replaced' => true];
+        } else {
+            $dot = strrpos($file['name'], '.');
+            $base = $dot !== false ? substr($file['name'], 0, $dot) : $file['name'];
+            $cleanName = "{$base}_clean." . ($ext ?: 'jpg');
+            $newFile = self::storeAssembledFile($userId, $file['folder_id'] !== null ? (int)$file['folder_id'] : null, $cleanName, $tmpClean);
+            return ['file_id' => (int)$newFile['id'], 'name' => $cleanName, 'replaced' => false];
+        }
+    }
+
+    public static function createAlias(int $userId, string $targetType, int $targetId, ?int $targetFolderId, ?string $customName = null): array
+    {
+        $pdo = Database::get();
+        $targetAccess = self::canWriteFolder($userId, $targetFolderId);
+        $ownerId = $targetAccess['effective_owner_id'];
+
+        if ($targetType === 'folder') {
+            $fAccess = self::resolveFolderAccess($userId, $targetId);
+            if (!$fAccess) throw new RuntimeException('Zielordner nicht gefunden.');
+            $origName = $fAccess['folder']['name'];
+            $aliasName = self::sanitizeName($customName ?: "Verknüpfung mit {$origName}");
+            $stmt = $pdo->prepare("
+                INSERT INTO folders (owner_id, parent_id, name, is_group_folder, alias_target_id, created_at, updated_at)
+                VALUES (:uid, :pid, :name, 0, :tid, datetime('now'), datetime('now'))
+            ");
+            $stmt->execute([':uid' => $ownerId, ':pid' => $targetFolderId, ':name' => $aliasName, ':tid' => $targetId]);
+            $newId = (int)$pdo->lastInsertId();
+            return ['id' => $newId, 'type' => 'folder', 'name' => $aliasName, 'alias_target_id' => $targetId];
+        } else {
+            $flAccess = self::resolveFileAccess($userId, $targetId);
+            if (!$flAccess) throw new RuntimeException('Zieldatei nicht gefunden.');
+            $origFile = $flAccess['file'];
+            $origName = $origFile['name'];
+            $aliasName = self::sanitizeName($customName ?: "Verknüpfung mit {$origName}");
+            $dummyStorage = 'alias_' . bin2hex(random_bytes(12)) . '.lnk';
+            $stmt = $pdo->prepare("
+                INSERT INTO files (owner_id, folder_id, name, storage_name, mime_type, size_bytes, sha256, is_encrypted, alias_target_id, alias_target_type, created_at, updated_at)
+                VALUES (:uid, :fid, :name, :sn, :mime, :sz, :sha, :enc, :tid, 'file', datetime('now'), datetime('now'))
+            ");
+            $stmt->execute([
+                ':uid'  => $ownerId,
+                ':fid'  => $targetFolderId,
+                ':name' => $aliasName,
+                ':sn'   => $dummyStorage,
+                ':mime' => $origFile['mime_type'],
+                ':sz'   => (int)$origFile['size_bytes'],
+                ':sha'  => $origFile['sha256'],
+                ':enc'  => (int)$origFile['is_encrypted'],
+                ':tid'  => $targetId,
+            ]);
+            $newId = (int)$pdo->lastInsertId();
+            return ['id' => $newId, 'type' => 'file', 'name' => $aliasName, 'alias_target_id' => $targetId];
+        }
     }
 }

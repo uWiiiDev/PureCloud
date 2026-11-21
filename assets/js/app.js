@@ -351,6 +351,7 @@
     }
 
     let activeOcrWorker = null;
+    let activeVoiceStream = null;
 
     function closeModal(fromHistory = false) {
         const backdrop = $('#modal-backdrop');
@@ -359,6 +360,11 @@
         if (activeOcrWorker) {
             activeOcrWorker.terminate().catch(() => {});
             activeOcrWorker = null;
+        }
+
+        if (activeVoiceStream) {
+            try { activeVoiceStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+            activeVoiceStream = null;
         }
 
         backdrop.classList.add('hidden');
@@ -1827,6 +1833,8 @@
                                 }
                                 <div class="item-name-wrap">
                                     <span class="item-name">${esc(item.name)}</span>
+                                    ${item.is_locked ? '<span class="item-locked-badge" title="Schreibgeschützt / Gesperrt">🔒</span>' : ''}
+                                    ${item.alias_target_id ? '<span class="item-alias-badge" title="Verknüpfung / Alias">↗️</span>' : ''}
                                     ${item.version_count > 0 ? `<span class="item-version-badge" data-action="versions" title="Revisionsverlauf (${item.version_count} Vorversionen)">v${item.version_count + 1}</span>` : ''}
                                     ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
                                     ${badges}
@@ -1953,6 +1961,8 @@
                     <div class="grid-title" data-open="${key}" title="${esc(item.name)}">
                         ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(item.color_tag)}"></span>` : ''}
                         <span>${esc(item.name)}</span>
+                        ${item.is_locked ? '<span class="item-locked-badge" title="Schreibgeschützt / Gesperrt">🔒</span>' : ''}
+                        ${item.alias_target_id ? '<span class="item-alias-badge" title="Verknüpfung / Alias">↗️</span>' : ''}
                         ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
                     </div>
                     <div class="grid-meta">
@@ -2205,6 +2215,34 @@
                     </button>
                 `;
             }
+            if (!isFolder && item.category === 'image') {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="exif_data">
+                        🧭 EXIF & GPS-Daten
+                    </button>
+                `;
+            }
+            if (!isFolder && item.category === 'pdf' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="sign_pdf">
+                        ✍️ Unterschreiben / Signieren
+                    </button>
+                `;
+            }
+            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="toggle_lock">
+                        ${item.is_locked ? '🔓 Schreibschutz aufheben' : '🔒 Schreibschutz aktivieren'}
+                    </button>
+                `;
+            }
+            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="create_alias">
+                        🔗 Verknüpfung erstellen
+                    </button>
+                `;
+            }
             if (['owner', 'write'].includes(state.permission)) {
                 if (isFolder) {
                     itemsHtml += `
@@ -2317,6 +2355,7 @@
         html += `
             <button type="button" class="dropdown-item" data-bg-act="new_folder">📁 Neuer Ordner</button>
             <button type="button" class="dropdown-item" data-bg-act="new_text">📝 Neue Textdatei</button>
+            <button type="button" class="dropdown-item" data-bg-act="voice_memo">🎙️ Sprachnotiz aufnehmen</button>
             <button type="button" class="dropdown-item" data-bg-act="upload">⬆️ Dateien hochladen</button>
         `;
 
@@ -2338,6 +2377,8 @@
                     $('#btn-new-folder')?.click();
                 } else if (act === 'new_text') {
                     $('#btn-new-text')?.click();
+                } else if (act === 'voice_memo') {
+                    openVoiceMemoModal();
                 } else if (act === 'upload') {
                     $('#file-input-multi')?.click();
                 }
@@ -2839,6 +2880,38 @@
                 openStorageAnalysisModal();
                 break;
 
+            case 'toggle_lock':
+                try {
+                    const res = await apiPost('toggle_lock', { type: item.type, id: item.id });
+                    toast(res.is_locked ? 'Schreibschutz aktiviert.' : 'Schreibschutz aufgehoben.');
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+                break;
+
+            case 'create_alias':
+                try {
+                    const aliasRes = await apiPost('create_alias', {
+                        target_type: item.type,
+                        target_id: item.id,
+                        target_folder_id: state.currentFolderId,
+                    });
+                    toast(`Verknüpfung „${aliasRes.alias.name}“ erstellt.`);
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+                break;
+
+            case 'exif_data':
+                openExifModal(item);
+                break;
+
+            case 'sign_pdf':
+                openPdfSignModal(item);
+                break;
+
             case 'rename':
                 openRenameModal(item);
                 break;
@@ -3278,6 +3351,11 @@
         openTextEditorModal(null, 'notiz.md', '');
     });
 
+    $('#btn-new-voice-memo')?.addEventListener('click', () => {
+        $('#new-action-menu')?.classList.add('hidden');
+        openVoiceMemoModal();
+    });
+
     function openTextEditorModal(fileId, fileName, content, readOnly = false) {
         openModal(fileId ? `Textdatei: ${fileName}` : 'Neue Textdatei erstellen', `
             <form id="text-editor-form">
@@ -3385,6 +3463,8 @@
                 <div style="display:flex;gap:0.35rem;align-items:center">
                     ${(!file.is_encrypted && (file.category === 'image' || file.category === 'pdf')) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-ocr">🔍 Text erkennen (OCR)</button>` : ''}
                     ${(!file.is_encrypted && file.category === 'image' && ['owner', 'write'].includes(state.permission)) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-optimize">🗜️ Optimieren</button>` : ''}
+                    ${(file.category === 'image') ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-exif">🧭 EXIF</button>` : ''}
+                    ${(!file.is_encrypted && file.category === 'pdf' && ['owner', 'write'].includes(state.permission)) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-sign">✍️ Signieren</button>` : ''}
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-note">📝 ${file.notes ? 'Notiz' : '+ Notiz'}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-versions">🕒 Versionen ${file.version_count > 0 ? `(${file.version_count + 1})` : ''}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-vault">🔒 Verschlüsseln</button>
@@ -3400,6 +3480,14 @@
         $('#modal-btn-optimize')?.addEventListener('click', () => {
             closeModal();
             openImageOptimizeModal(file);
+        });
+        $('#modal-btn-exif')?.addEventListener('click', () => {
+            closeModal();
+            openExifModal(file);
+        });
+        $('#modal-btn-sign')?.addEventListener('click', () => {
+            closeModal();
+            openPdfSignModal(file);
         });
         $('#modal-btn-vault')?.addEventListener('click', () => {
             openVaultModal(file);
@@ -3450,6 +3538,13 @@
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
         return window.pdfjsLib;
+    }
+
+    async function ensurePdfLib() {
+        if (!window.PDFLib) {
+            await loadScriptOnce('https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js');
+        }
+        return window.PDFLib;
     }
 
     async function openOcrModal(file) {
@@ -4354,6 +4449,596 @@
             toast(`Fehler beim Laden des Radars: ${err.message}`, 'error');
             closeModal();
         }
+    }
+
+    // EXIF & GPS Metadata Viewer & Privacy Sanitizer
+    async function openExifModal(file) {
+        openModal(`🧭 EXIF & Metadaten: ${esc(file.name)}`, `
+            <div id="exif-modal-content">
+                <div style="text-align:center;padding:2rem">
+                    <span class="spinner"></span> Lese Metadaten…
+                </div>
+            </div>
+        `);
+
+        try {
+            const res = await apiGet({ action: 'get_exif', id: file.id });
+            const contentEl = $('#exif-modal-content');
+            if (!contentEl) return;
+
+            const data = res.data;
+            if (!data || !data.has_exif) {
+                contentEl.innerHTML = `
+                    <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+                        <div style="font-size:2.5rem;margin-bottom:0.75rem">📷</div>
+                        <p style="font-weight:600;margin-bottom:0.35rem">Keine EXIF-Metadaten vorhanden</p>
+                        <p class="small">Dieses Bild enthält keine Kamera- oder Standortdaten (möglicherweise bereits bereinigt oder Screenshots/Webgrafiken).</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const tags = data.all_tags || {};
+            let rowsHtml = '';
+            for (const [k, v] of Object.entries(tags)) {
+                if (v !== null && v !== undefined && v !== '') {
+                    rowsHtml += `<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`;
+                }
+            }
+
+            let gpsHtml = '';
+            if (data.gps) {
+                gpsHtml = `
+                    <tr>
+                        <td>GPS-Standort</td>
+                        <td>
+                            <span style="font-family:monospace">${esc(String(data.gps.latitude))}, ${esc(String(data.gps.longitude))}</span>
+                            <a href="${esc(data.gps.maps_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-xs" style="margin-left:0.5rem;text-decoration:none">
+                                🗺️ Auf Karte anzeigen
+                            </a>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            contentEl.innerHTML = `
+                <table class="exif-table">
+                    <tbody>
+                        ${rowsHtml}
+                        ${gpsHtml}
+                    </tbody>
+                </table>
+                <div style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border)">
+                    <div style="font-weight:600;margin-bottom:0.25rem">🛡️ Privacy-Filter / Metadaten bereinigen</div>
+                    <div class="muted small" style="margin-bottom:0.75rem">
+                        Entfernt alle Kamera-Tags, Zeitstempel und GPS-Koordinaten für maximale Privatsphäre.
+                    </div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-exif-clean-copy">
+                            📄 Als bereinigte Kopie speichern
+                        </button>
+                        ${!file.is_locked ? `
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-exif-clean-replace">
+                            ✨ Original bereinigen
+                        </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+
+            const doStrip = async (replace) => {
+                try {
+                    contentEl.innerHTML = `<div style="text-align:center;padding:2rem"><span class="spinner"></span> Bereinige Metadaten…</div>`;
+                    const stripRes = await apiPost('strip_exif', { id: file.id, replace: replace });
+                    toast(replace ? 'Metadaten erfolgreich aus dem Original entfernt.' : `Bereinigte Kopie „${stripRes.result.name}“ erstellt.`);
+                    closeModal();
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                    closeModal();
+                }
+            };
+
+            $('#btn-exif-clean-copy')?.addEventListener('click', () => doStrip(false));
+            $('#btn-exif-clean-replace')?.addEventListener('click', () => doStrip(true));
+        } catch (err) {
+            toast(`Fehler beim Lesen der Metadaten: ${err.message}`, 'error');
+            closeModal();
+        }
+    }
+
+    // Voice Memo Recorder Modal
+    function openVoiceMemoModal() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            toast('Mikrofon-Aufnahme wird von diesem Browser nicht unterstützt oder ist blockiert.', 'error');
+            return;
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+        const defaultName = `Sprachnotiz_${dateStr}_${timeStr}.webm`;
+
+        openModal('🎙️ Sprachnotiz aufnehmen', `
+            <div style="text-align:center;padding:1rem 0 1.5rem">
+                <div class="voice-recorder-wrap" style="display:flex;flex-direction:column;align-items:center;gap:1rem">
+                    <button type="button" class="record-pulse-btn" id="btn-record-toggle" title="Aufnahme starten">
+                        🎙️
+                    </button>
+                    <div style="font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text-main)" id="record-timer">
+                        00:00
+                    </div>
+                    <div class="muted small" id="record-status">Klicken Sie auf das Mikrofon, um die Aufnahme zu starten.</div>
+                </div>
+
+                <audio id="record-audio-preview" controls class="hidden" style="width:100%;max-width:360px;margin:1.25rem auto 0"></audio>
+
+                <div style="margin-top:1.25rem;text-align:left">
+                    <label style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem">Dateiname</label>
+                    <input type="text" class="input" id="record-filename" value="${esc(defaultName)}" style="width:100%">
+                </div>
+
+                <div style="margin-top:1.25rem;display:flex;justify-content:flex-end;gap:0.5rem">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-record-cancel">Abbrechen</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="btn-record-save" disabled>💾 Sprachnotiz speichern</button>
+                </div>
+            </div>
+        `);
+
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let audioBlob = null;
+        let timerInterval = null;
+        let secondsElapsed = 0;
+        let isRecording = false;
+
+        const btnToggle = $('#btn-record-toggle');
+        const timerEl = $('#record-timer');
+        const statusEl = $('#record-status');
+        const audioPreview = $('#record-audio-preview');
+        const btnSave = $('#btn-record-save');
+        const btnCancel = $('#btn-record-cancel');
+        const nameInput = $('#record-filename');
+
+        function formatTime(sec) {
+            const m = Math.floor(sec / 60).toString().padStart(2, '0');
+            const s = (sec % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        function stopTracks() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            if (activeVoiceStream) {
+                activeVoiceStream.getTracks().forEach((t) => t.stop());
+                activeVoiceStream = null;
+            }
+        }
+
+        async function startRecording() {
+            try {
+                activeVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                let mimeType = 'audio/webm;codecs=opus';
+                if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mimeType)) {
+                    mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
+                }
+                mediaRecorder = mimeType ? new MediaRecorder(activeVoiceStream, { mimeType }) : new MediaRecorder(activeVoiceStream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    const url = URL.createObjectURL(audioBlob);
+                    audioPreview.src = url;
+                    audioPreview.classList.remove('hidden');
+                    btnSave.disabled = false;
+                    statusEl.textContent = 'Aufnahme beendet. Sie können die Notiz jetzt anhören und speichern.';
+                };
+
+                mediaRecorder.start(250);
+                isRecording = true;
+                btnToggle.classList.add('recording');
+                btnToggle.textContent = '⏹️';
+                btnToggle.title = 'Aufnahme beenden';
+                statusEl.textContent = 'Aufnahme läuft…';
+                secondsElapsed = 0;
+                timerEl.textContent = '00:00';
+                timerInterval = setInterval(() => {
+                    secondsElapsed++;
+                    timerEl.textContent = formatTime(secondsElapsed);
+                }, 1000);
+            } catch (err) {
+                toast(`Mikrofon-Zugriff verweigert oder nicht verfügbar: ${err.message}`, 'error');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            stopTracks();
+            isRecording = false;
+            btnToggle.classList.remove('recording');
+            btnToggle.textContent = '🎙️';
+            btnToggle.title = 'Neue Aufnahme starten';
+        }
+
+        btnToggle?.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
+        btnSave?.addEventListener('click', async () => {
+            if (!audioBlob) return;
+            const filename = (nameInput.value || 'Sprachnotiz.webm').trim();
+            stopTracks();
+            try {
+                btnSave.disabled = true;
+                btnSave.textContent = 'Wird gespeichert…';
+                const fileObj = new File([audioBlob], filename, { type: audioBlob.type || 'audio/webm' });
+                closeModal();
+                await uploadFileEntries([{ file: fileObj, relativePath: '' }], state.currentFolderId);
+                toast(`Sprachnotiz „${filename}“ erfolgreich gespeichert.`);
+            } catch (err) {
+                toast(`Fehler beim Speichern der Sprachnotiz: ${err.message}`, 'error');
+            }
+        });
+
+        btnCancel?.addEventListener('click', () => {
+            stopTracks();
+            closeModal();
+        });
+    }
+
+    // PDF Digital Signature Workspace Modal
+    async function openPdfSignModal(file) {
+        openModal(`✍️ PDF digital signieren: ${esc(file.name)}`, `
+            <div id="pdf-sign-container">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.5rem 0.75rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;margin-bottom:0.75rem">
+                    <div style="display:flex;align-items:center;gap:0.4rem">
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-pdf-sig-prev" title="Vorherige Seite">◀</button>
+                        <span class="small" style="font-weight:600">Seite <span id="pdf-sig-cur-page">1</span> von <span id="pdf-sig-total-pages">1</span></span>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-pdf-sig-next" title="Nächste Seite">▶</button>
+                    </div>
+                    <div class="muted small">
+                        1. Signatur zeichnen · 2. Signaturfeld an die richtige Stelle ziehen · 3. Speichern
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 320px;gap:1rem;align-items:start;" class="pdf-sign-layout">
+                    <!-- PDF Page Preview Viewport -->
+                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:0.5rem;display:flex;justify-content:center;overflow:auto;max-height:55vh;">
+                        <div id="pdf-sign-viewport" style="position:relative;display:inline-block;box-shadow:0 2px 8px rgba(0,0,0,0.15);background:#fff;user-select:none;">
+                            <canvas id="pdf-sign-canvas" style="display:block;max-width:100%;height:auto;"></canvas>
+                            <div id="pdf-sig-draggable" class="signature-drag-box hidden" style="position:absolute;left:20px;top:20px;width:160px;height:60px;border:2px dashed #2563eb;background:rgba(37,99,235,0.1);cursor:move;touch-action:none;display:flex;align-items:center;justify-content:center;z-index:10;">
+                                <img id="pdf-sig-preview-img" style="max-width:100%;max-height:100%;pointer-events:none;" alt="Unterschrift">
+                                <div style="position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);font-size:10px;color:#2563eb;font-weight:700;white-space:nowrap;background:rgba(255,255,255,0.9);padding:1px 4px;border-radius:3px;">✥ Platzieren</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Signature Pad Controls -->
+                    <div style="display:flex;flex-direction:column;gap:0.75rem">
+                        <div>
+                            <label style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem">Unterschrift zeichnen</label>
+                            <div style="border:1px solid var(--border);border-radius:6px;background:#ffffff;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,0.05);">
+                                <canvas id="pdf-pad-canvas" width="320" height="130" style="display:block;width:100%;height:130px;cursor:crosshair;touch-action:none;background:#ffffff;"></canvas>
+                            </div>
+                        </div>
+
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+                            <div style="display:flex;align-items:center;gap:0.35rem">
+                                <button type="button" class="btn btn-xs btn-outline" id="btn-sig-color-navy" style="font-weight:600;color:#0f172a">Dunkelblau</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="btn-sig-color-black" style="font-weight:600;color:#000000">Schwarz</button>
+                            </div>
+                            <button type="button" class="btn btn-ghost btn-xs text-danger" id="btn-sig-clear">🧹 Löschen</button>
+                        </div>
+
+                        <div style="font-size:0.85rem">
+                            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer">
+                                <input type="checkbox" id="chk-sig-add-date" checked>
+                                <span>Datum automatisch einfügen</span>
+                            </label>
+                        </div>
+
+                        <div style="margin-top:auto;padding-top:1rem;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:0.5rem">
+                            <button type="button" class="btn btn-primary" id="btn-pdf-sig-save" disabled>
+                                ✍️ Signierte PDF speichern
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-pdf-sig-cancel">
+                                Abbrechen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `, true);
+
+        let pdfDoc = null;
+        let pdfArrayBuffer = null;
+        let currentPdfPage = 1;
+        let totalPdfPages = 1;
+
+        // Signature Pad Drawing Logic
+        const padCanvas = $('#pdf-pad-canvas');
+        if (!padCanvas) return;
+        const padCtx = padCanvas.getContext('2d');
+        let isDrawing = false;
+        let hasDrawn = false;
+        let strokeColor = '#0f172a';
+
+        padCtx.lineWidth = 2.5;
+        padCtx.lineCap = 'round';
+        padCtx.lineJoin = 'round';
+        padCtx.strokeStyle = strokeColor;
+
+        function getPadPos(e) {
+            const rect = padCanvas.getBoundingClientRect();
+            const scaleX = padCanvas.width / rect.width;
+            const scaleY = padCanvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY,
+            };
+        }
+
+        padCanvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            padCanvas.setPointerCapture(e.pointerId);
+            isDrawing = true;
+            const pos = getPadPos(e);
+            padCtx.beginPath();
+            padCtx.moveTo(pos.x, pos.y);
+        });
+
+        padCanvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing) return;
+            e.preventDefault();
+            const pos = getPadPos(e);
+            padCtx.lineTo(pos.x, pos.y);
+            padCtx.stroke();
+            hasDrawn = true;
+        });
+
+        function generateSignatureDataUrl() {
+            if (!hasDrawn) return null;
+            const addDate = $('#chk-sig-add-date')?.checked;
+            const offCanvas = document.createElement('canvas');
+            const w = padCanvas.width;
+            const h = addDate ? padCanvas.height + 25 : padCanvas.height;
+            offCanvas.width = w;
+            offCanvas.height = h;
+            const offCtx = offCanvas.getContext('2d');
+
+            offCtx.drawImage(padCanvas, 0, 0);
+
+            if (addDate) {
+                const today = new Date().toLocaleDateString('de-DE');
+                offCtx.font = '12px sans-serif';
+                offCtx.fillStyle = strokeColor;
+                offCtx.fillText(`Datum: ${today}`, 8, padCanvas.height + 18);
+            }
+
+            return offCanvas.toDataURL('image/png');
+        }
+
+        function updateSignaturePreview() {
+            const dataUrl = generateSignatureDataUrl();
+            if (!dataUrl) return;
+            const dragBox = $('#pdf-sig-draggable');
+            const previewImg = $('#pdf-sig-preview-img');
+            const btnSave = $('#btn-pdf-sig-save');
+            if (dragBox && previewImg) {
+                previewImg.src = dataUrl;
+                dragBox.classList.remove('hidden');
+                if (btnSave) btnSave.disabled = false;
+            }
+        }
+
+        const finishStroke = (e) => {
+            if (!isDrawing) return;
+            isDrawing = false;
+            try { padCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+            if (hasDrawn) {
+                updateSignaturePreview();
+            }
+        };
+
+        padCanvas.addEventListener('pointerup', finishStroke);
+        padCanvas.addEventListener('pointercancel', finishStroke);
+
+        $('#chk-sig-add-date')?.addEventListener('change', () => {
+            if (hasDrawn) updateSignaturePreview();
+        });
+
+        $('#btn-sig-color-navy')?.addEventListener('click', () => {
+            strokeColor = '#0f172a';
+            padCtx.strokeStyle = strokeColor;
+            $('#btn-sig-color-navy').classList.add('btn-outline');
+            $('#btn-sig-color-navy').classList.remove('btn-ghost');
+            $('#btn-sig-color-black').classList.remove('btn-outline');
+            $('#btn-sig-color-black').classList.add('btn-ghost');
+        });
+
+        $('#btn-sig-color-black')?.addEventListener('click', () => {
+            strokeColor = '#000000';
+            padCtx.strokeStyle = strokeColor;
+            $('#btn-sig-color-black').classList.add('btn-outline');
+            $('#btn-sig-color-black').classList.remove('btn-ghost');
+            $('#btn-sig-color-navy').classList.remove('btn-outline');
+            $('#btn-sig-color-navy').classList.add('btn-ghost');
+        });
+
+        $('#btn-sig-clear')?.addEventListener('click', () => {
+            padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height);
+            hasDrawn = false;
+            $('#pdf-sig-draggable')?.classList.add('hidden');
+            const btnSave = $('#btn-pdf-sig-save');
+            if (btnSave) btnSave.disabled = true;
+        });
+
+        // Draggable Signature Box in Viewport
+        const dragBox = $('#pdf-sig-draggable');
+        const viewport = $('#pdf-sign-viewport');
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+        let origLeft = 20, origTop = 20;
+
+        dragBox.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            isDragging = true;
+            dragBox.setPointerCapture(e.pointerId);
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            origLeft = dragBox.offsetLeft;
+            origTop = dragBox.offsetTop;
+        });
+
+        dragBox.addEventListener('pointermove', (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+
+            const maxLeft = Math.max(0, viewport.clientWidth - dragBox.offsetWidth);
+            const maxTop = Math.max(0, viewport.clientHeight - dragBox.offsetHeight);
+
+            const newLeft = Math.max(0, Math.min(maxLeft, origLeft + dx));
+            const newTop = Math.max(0, Math.min(maxTop, origTop + dy));
+
+            dragBox.style.left = `${newLeft}px`;
+            dragBox.style.top = `${newTop}px`;
+        });
+
+        const stopDrag = (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            try { dragBox.releasePointerCapture(e.pointerId); } catch (_) {}
+        };
+
+        dragBox.addEventListener('pointerup', stopDrag);
+        dragBox.addEventListener('pointercancel', stopDrag);
+
+        // Load PDF & Render Pages
+        async function renderPage(pageNum) {
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(pageNum);
+            const initialVp = page.getViewport({ scale: 1.0 });
+            const scale = Math.min(650 / initialVp.width, 1.5);
+            const scaledVp = page.getViewport({ scale });
+
+            const pdfCanvas = $('#pdf-sign-canvas');
+            const pdfCtx = pdfCanvas.getContext('2d');
+            pdfCanvas.width = scaledVp.width;
+            pdfCanvas.height = scaledVp.height;
+
+            await page.render({
+                canvasContext: pdfCtx,
+                viewport: scaledVp,
+            }).promise;
+
+            $('#pdf-sig-cur-page').textContent = pageNum;
+            $('#pdf-sig-total-pages').textContent = totalPdfPages;
+            $('#btn-pdf-sig-prev').disabled = pageNum <= 1;
+            $('#btn-pdf-sig-next').disabled = pageNum >= totalPdfPages;
+        }
+
+        try {
+            const pdfjsLib = await ensurePdfJs();
+            const resp = await fetch(`api.php?action=download&id=${file.id}`);
+            if (!resp.ok) throw new Error(`Download fehlgeschlagen (${resp.status})`);
+            pdfArrayBuffer = await resp.arrayBuffer();
+
+            const loadingTask = pdfjsLib.getDocument({ data: pdfArrayBuffer.slice(0) });
+            pdfDoc = await loadingTask.promise;
+            totalPdfPages = pdfDoc.numPages;
+            currentPdfPage = 1;
+            await renderPage(1);
+        } catch (err) {
+            toast(`Fehler beim Laden des PDF-Dokuments: ${err.message}`, 'error');
+            closeModal();
+            return;
+        }
+
+        $('#btn-pdf-sig-prev')?.addEventListener('click', async () => {
+            if (currentPdfPage > 1) {
+                currentPdfPage--;
+                await renderPage(currentPdfPage);
+            }
+        });
+
+        $('#btn-pdf-sig-next')?.addEventListener('click', async () => {
+            if (currentPdfPage < totalPdfPages) {
+                currentPdfPage++;
+                await renderPage(currentPdfPage);
+            }
+        });
+
+        $('#btn-pdf-sig-cancel')?.addEventListener('click', () => closeModal());
+
+        // Save Signed PDF using PDF-lib
+        $('#btn-pdf-sig-save')?.addEventListener('click', async () => {
+            const dataUrl = generateSignatureDataUrl();
+            if (!dataUrl || !pdfArrayBuffer) return;
+
+            const btnSave = $('#btn-pdf-sig-save');
+            btnSave.disabled = true;
+            btnSave.textContent = 'Signiere Dokument…';
+
+            try {
+                const PDFLib = await ensurePdfLib();
+                const pdfDocLib = await PDFLib.PDFDocument.load(pdfArrayBuffer);
+
+                const pages = pdfDocLib.getPages();
+                const targetPage = pages[currentPdfPage - 1];
+                const { width: pWidth, height: pHeight } = targetPage.getSize();
+
+                const pdfCanvas = $('#pdf-sign-canvas');
+                const cWidth = pdfCanvas.clientWidth || pdfCanvas.width;
+                const cHeight = pdfCanvas.clientHeight || pdfCanvas.height;
+
+                const normX = dragBox.offsetLeft / cWidth;
+                const normY = dragBox.offsetTop / cHeight;
+                const normW = dragBox.offsetWidth / cWidth;
+                const normH = dragBox.offsetHeight / cHeight;
+
+                const sigPdfX = normX * pWidth;
+                const sigPdfW = normW * pWidth;
+                const sigPdfH = normH * pHeight;
+                // PDF coordinate system origin is at the bottom-left!
+                const sigPdfY = pHeight - (normY * pHeight) - sigPdfH;
+
+                const pngImage = await pdfDocLib.embedPng(dataUrl);
+                targetPage.drawImage(pngImage, {
+                    x: sigPdfX,
+                    y: sigPdfY,
+                    width: sigPdfW,
+                    height: sigPdfH,
+                });
+
+                const savedBytes = await pdfDocLib.save();
+                const dotIdx = file.name.lastIndexOf('.');
+                const baseName = dotIdx !== -1 ? file.name.slice(0, dotIdx) : file.name;
+                const signedFileName = `${baseName}_signiert.pdf`;
+
+                const signedFile = new File([savedBytes], signedFileName, { type: 'application/pdf' });
+                closeModal();
+                await uploadFileEntries([{ file: signedFile, relativePath: '' }], state.currentFolderId);
+                toast(`Signiertes Dokument „${signedFileName}“ erfolgreich gespeichert.`);
+            } catch (err) {
+                toast(`Fehler beim Signieren: ${err.message}`, 'error');
+                btnSave.disabled = false;
+                btnSave.textContent = '✍️ Signierte PDF speichern';
+            }
+        });
     }
 
     // ZIP Inspector & Extractor Modal

@@ -257,7 +257,7 @@ class Database
             }
         }
 
-        // Auto-migrate color_tag and notes columns on existing files table
+        // Auto-migrate color_tag, notes, is_locked, and alias columns on existing files table
         $fileCols = [];
         foreach ($pdo->query("PRAGMA table_info(files)")->fetchAll() as $col) {
             $fileCols[$col['name']] = true;
@@ -268,8 +268,17 @@ class Database
         if (!isset($fileCols['notes'])) {
             $pdo->exec("ALTER TABLE files ADD COLUMN notes TEXT NULL");
         }
+        if (!isset($fileCols['is_locked'])) {
+            $pdo->exec("ALTER TABLE files ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($fileCols['alias_target_id'])) {
+            $pdo->exec("ALTER TABLE files ADD COLUMN alias_target_id INTEGER NULL");
+        }
+        if (!isset($fileCols['alias_target_type'])) {
+            $pdo->exec("ALTER TABLE files ADD COLUMN alias_target_type TEXT NULL");
+        }
 
-        // Auto-migrate is_group_folder, color_tag, and notes columns on existing folders table
+        // Auto-migrate is_group_folder, color_tag, notes, is_locked, and alias columns on existing folders table
         $folderCols = [];
         foreach ($pdo->query("PRAGMA table_info(folders)")->fetchAll() as $col) {
             $folderCols[$col['name']] = true;
@@ -282,6 +291,12 @@ class Database
         }
         if (!isset($folderCols['notes'])) {
             $pdo->exec("ALTER TABLE folders ADD COLUMN notes TEXT NULL");
+        }
+        if (!isset($folderCols['is_locked'])) {
+            $pdo->exec("ALTER TABLE folders ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($folderCols['alias_target_id'])) {
+            $pdo->exec("ALTER TABLE folders ADD COLUMN alias_target_id INTEGER NULL");
         }
 
         if ($isNew) {
