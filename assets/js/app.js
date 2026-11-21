@@ -350,9 +350,16 @@
         }
     }
 
+    let activeOcrWorker = null;
+
     function closeModal(fromHistory = false) {
         const backdrop = $('#modal-backdrop');
         if (backdrop.classList.contains('hidden')) return;
+
+        if (activeOcrWorker) {
+            activeOcrWorker.terminate().catch(() => {});
+            activeOcrWorker = null;
+        }
 
         backdrop.classList.add('hidden');
         $('#modal-body').innerHTML = '';
@@ -2175,6 +2182,13 @@
                     </button>
                 `;
             }
+            if (!isFolder && (item.category === 'image' || item.category === 'pdf') && !item.is_encrypted) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="ocr">
+                        🔍 Text erkennen (OCR)
+                    </button>
+                `;
+            }
             if (['owner', 'write'].includes(state.permission)) {
                 if (isFolder) {
                     itemsHtml += `
@@ -2778,6 +2792,10 @@
                 playDockAudio(item);
                 break;
 
+            case 'ocr':
+                openOcrModal(item);
+                break;
+
             case 'rename':
                 openRenameModal(item);
                 break;
@@ -3322,6 +3340,7 @@
                     ${file.sha256 ? `<span class="muted" style="cursor:pointer" id="btn-copy-sha" title="SHA-256 in die Zwischenablage kopieren (Klick)">🔒 ${esc(file.sha256.slice(0, 10))}…</span>` : ''}
                 </div>
                 <div style="display:flex;gap:0.35rem;align-items:center">
+                    ${(!file.is_encrypted && (file.category === 'image' || file.category === 'pdf')) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-ocr">🔍 Text erkennen (OCR)</button>` : ''}
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-note">📝 ${file.notes ? 'Notiz' : '+ Notiz'}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-versions">🕒 Versionen ${file.version_count > 0 ? `(${file.version_count + 1})` : ''}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-vault">🔒 Verschlüsseln</button>
@@ -3330,6 +3349,10 @@
             </div>
         `, file.category === 'pdf' || file.category === 'image' || file.category === 'video');
 
+        $('#modal-btn-ocr')?.addEventListener('click', () => {
+            closeModal();
+            openOcrModal(file);
+        });
         $('#modal-btn-vault')?.addEventListener('click', () => {
             openVaultModal(file);
         });
@@ -3349,6 +3372,380 @@
                 });
             }
         });
+    }
+
+    // OCR Text Recognition (Client-side via Tesseract.js & PDF.js)
+    async function loadScriptOnce(src) {
+        return new Promise((resolve, reject) => {
+            if (document.querySelector(`script[src="${src}"]`)) {
+                return resolve();
+            }
+            const s = document.createElement('script');
+            s.src = src;
+            s.async = true;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error(`Fehler beim Laden von ${src}`));
+            document.head.appendChild(s);
+        });
+    }
+
+    async function ensureTesseract() {
+        if (!window.Tesseract) {
+            await loadScriptOnce('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+        }
+        return window.Tesseract;
+    }
+
+    async function ensurePdfJs() {
+        if (!window.pdfjsLib) {
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+        return window.pdfjsLib;
+    }
+
+    async function openOcrModal(file) {
+        if (activeOcrWorker) {
+            try { await activeOcrWorker.terminate(); } catch (_) {}
+            activeOcrWorker = null;
+        }
+
+        const isPdf = file.category === 'pdf';
+        const streamUrl = `api.php?action=download&id=${file.id}&inline=1`;
+
+        openModal(`🔍 Text erkennen (OCR) – ${esc(file.name)}`, `
+            <div style="display:flex;flex-direction:column;gap:0.75rem">
+                <!-- Toolbar -->
+                <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.5rem 0.75rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px">
+                    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                        <label for="ocr-lang-select" style="font-size:0.82rem;font-weight:600;color:var(--text-muted)">Sprache:</label>
+                        <select id="ocr-lang-select" class="input input-sm" style="width:auto;min-width:140px;padding:0.25rem 0.5rem;font-size:0.84rem">
+                            <option value="deu" selected>🇩🇪 Deutsch</option>
+                            <option value="eng">🇬🇧 Englisch</option>
+                            <option value="deu+eng">🇩🇪+🇬🇧 Deu + Eng</option>
+                            <option value="fra">🇫🇷 Französisch</option>
+                            <option value="spa">🇪🇸 Spanisch</option>
+                            <option value="ita">🇮🇹 Italienisch</option>
+                        </select>
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-ocr-run">▶ Erkennung starten</button>
+                    </div>
+                    <div id="ocr-status-badge" style="font-size:0.82rem;display:flex;align-items:center;gap:0.4rem;color:var(--text-muted)">
+                        <span id="ocr-status-icon">⚪</span> <span id="ocr-status-text">Bereit</span>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div id="ocr-progress-box" class="hidden" style="display:flex;flex-direction:column;gap:0.25rem">
+                    <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--text-muted)">
+                        <span id="ocr-progress-msg">Initialisiere...</span>
+                        <span id="ocr-progress-pct">0%</span>
+                    </div>
+                    <div style="height:6px;width:100%;background:var(--border);border-radius:3px;overflow:hidden">
+                        <div id="ocr-progress-bar" style="height:100%;width:0%;background:var(--primary);transition:width 0.2s ease"></div>
+                    </div>
+                </div>
+
+                <!-- Split Workspace -->
+                <div class="ocr-split-view">
+                    <!-- Left: Preview -->
+                    <div class="ocr-panel">
+                        <div class="ocr-panel-header">
+                            <span>Vorschau</span>
+                            <span id="ocr-preview-info">${isPdf ? 'PDF Dokument' : 'Bild'}</span>
+                        </div>
+                        <div class="ocr-panel-body" id="ocr-preview-container">
+                            ${isPdf 
+                                ? `<canvas id="ocr-canvas" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,0.2)"></canvas>`
+                                : `<img id="ocr-img" src="${streamUrl}" alt="${esc(file.name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,0.2)" />`
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Right: Recognized Text -->
+                    <div class="ocr-panel">
+                        <div class="ocr-panel-header">
+                            <span>Erkannter Text</span>
+                            <span id="ocr-stats">0 Zeichen · 0 Wörter</span>
+                        </div>
+                        <div class="ocr-panel-body" style="padding:0">
+                            <textarea id="ocr-text-result" class="ocr-textarea" placeholder="Der erkannte Text erscheint hier…"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions Footer -->
+                <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:0.5rem;padding-top:0.4rem;border-top:1px solid var(--border)">
+                    <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-ocr-copy" disabled>📋 In Zwischenablage</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-ocr-save-txt" disabled>📝 Als .txt speichern</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-ocr-save-note" disabled>📌 Als Notiz anfügen</button>
+                    </div>
+                    <button type="button" class="btn btn-ghost" id="btn-ocr-close">Schließen</button>
+                </div>
+            </div>
+        `, true);
+
+        const statusIcon = $('#ocr-status-icon');
+        const statusText = $('#ocr-status-text');
+        const progressBox = $('#ocr-progress-box');
+        const progressMsg = $('#ocr-progress-msg');
+        const progressPct = $('#ocr-progress-pct');
+        const progressBar = $('#ocr-progress-bar');
+        const textResult = $('#ocr-text-result');
+        const statsEl = $('#ocr-stats');
+        const btnRun = $('#btn-ocr-run');
+        const btnCopy = $('#btn-ocr-copy');
+        const btnSaveTxt = $('#btn-ocr-save-txt');
+        const btnSaveNote = $('#btn-ocr-save-note');
+        const btnClose = $('#btn-ocr-close');
+        const langSelect = $('#ocr-lang-select');
+        const previewInfo = $('#ocr-preview-info');
+
+        let isRunning = false;
+        let isCanceled = false;
+
+        function updateStats() {
+            const val = textResult?.value || '';
+            const chars = val.length;
+            const words = val.trim() ? val.trim().split(/\s+/).length : 0;
+            if (statsEl) statsEl.textContent = `${chars} Zeichen · ${words} Wörter`;
+            const hasText = chars > 0;
+            if (btnCopy) btnCopy.disabled = !hasText;
+            if (btnSaveTxt) btnSaveTxt.disabled = !hasText;
+            if (btnSaveNote) btnSaveNote.disabled = !hasText;
+        }
+
+        textResult?.addEventListener('input', updateStats);
+
+        function setStatus(text, icon = '⚪') {
+            if (statusIcon) statusIcon.textContent = icon;
+            if (statusText) statusText.textContent = text;
+        }
+
+        function setProgress(msg, percent) {
+            if (progressBox) progressBox.classList.remove('hidden');
+            if (progressMsg) progressMsg.textContent = msg;
+            const p = Math.max(0, Math.min(100, Math.round(percent)));
+            if (progressPct) progressPct.textContent = `${p}%`;
+            if (progressBar) progressBar.style.width = `${p}%`;
+        }
+
+        function translateStatus(s, lang) {
+            switch (s) {
+                case 'loading tesseract core': return 'Lade OCR-Kern...';
+                case 'loaded tesseract core': return 'OCR-Kern geladen';
+                case 'loading language traineddata': return `Lade Sprachmodell (${lang})...`;
+                case 'loaded language traineddata': return 'Sprachmodell geladen';
+                case 'initializing api': return 'Initialisiere OCR-Engine...';
+                case 'initialized api': return 'OCR-Engine bereit';
+                case 'recognizing text': return 'Analysiere Bild und erkenne Text...';
+                default: return s;
+            }
+        }
+
+        async function runOcr() {
+            if (isRunning) return;
+            isRunning = true;
+            isCanceled = false;
+            if (btnRun) btnRun.disabled = true;
+            const selectedLang = langSelect?.value || 'deu';
+
+            setStatus('Initialisiere...', '⏳');
+            setProgress('Lade OCR-Bibliothek...', 5);
+
+            try {
+                const Tesseract = await ensureTesseract();
+
+                if (isPdf) {
+                    const pdfjsLib = await ensurePdfJs();
+                    setStatus('Lade PDF...', '⏳');
+                    setProgress('Lade PDF-Dokument...', 10);
+
+                    const resp = await fetch(streamUrl);
+                    if (!resp.ok) throw new Error(`Download fehlgeschlagen (${resp.status})`);
+                    const arrayBuffer = await resp.arrayBuffer();
+
+                    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                    const pdfDoc = await loadingTask.promise;
+                    const numPages = pdfDoc.numPages;
+
+                    setProgress(`PDF geladen (${numPages} Seiten). Initialisiere OCR...`, 20);
+
+                    const langs = selectedLang.includes('+') ? selectedLang.split('+') : selectedLang;
+                    let currentPage = 1;
+
+                    activeOcrWorker = await Tesseract.createWorker(langs, 1, {
+                        logger: (m) => {
+                            if (m.status === 'recognizing text') {
+                                const basePct = 20 + ((currentPage - 1) / numPages) * 75;
+                                const pageProgress = (m.progress || 0) * (75 / numPages);
+                                setProgress(`Seite ${currentPage}/${numPages}: Erkenne Text...`, basePct + pageProgress);
+                            }
+                        }
+                    });
+
+                    let fullText = '';
+
+                    for (let p = 1; p <= numPages; p++) {
+                        if (isCanceled) break;
+                        currentPage = p;
+                        if (previewInfo) previewInfo.textContent = `Seite ${p} von ${numPages}`;
+                        setProgress(`Verarbeite Seite ${p} von ${numPages}...`, 20 + ((p - 1) / numPages) * 75);
+
+                        const page = await pdfDoc.getPage(p);
+
+                        // Render to canvas
+                        const canvas = $('#ocr-canvas');
+                        if (canvas) {
+                            const viewport = page.getViewport({ scale: 1.8 });
+                            canvas.width = viewport.width;
+                            canvas.height = viewport.height;
+                            const ctx = canvas.getContext('2d');
+                            await page.render({ canvasContext: ctx, viewport }).promise;
+                        }
+
+                        // Check if digital text is already embedded in PDF
+                        const textContent = await page.getTextContent();
+                        const rawText = textContent.items.map((it) => it.str).join(' ').trim();
+
+                        let pageExtracted = '';
+                        if (rawText.length > 60) {
+                            pageExtracted = rawText;
+                        } else if (canvas) {
+                            const result = await activeOcrWorker.recognize(canvas);
+                            pageExtracted = (result?.data?.text || '').trim();
+                        }
+
+                        if (pageExtracted) {
+                            fullText += (p > 1 ? '\n\n' : '') + `--- [Seite ${p}/${numPages}] ---\n` + pageExtracted;
+                            if (textResult) {
+                                textResult.value = fullText;
+                                updateStats();
+                            }
+                        }
+                    }
+
+                    if (activeOcrWorker) {
+                        await activeOcrWorker.terminate();
+                        activeOcrWorker = null;
+                    }
+
+                } else {
+                    // Image OCR
+                    setStatus('Erkenne Bildtext...', '⏳');
+                    const langs = selectedLang.includes('+') ? selectedLang.split('+') : selectedLang;
+
+                    activeOcrWorker = await Tesseract.createWorker(langs, 1, {
+                        logger: (m) => {
+                            const trans = translateStatus(m.status, selectedLang);
+                            const pct = Math.round((m.progress || 0) * 100);
+                            setProgress(trans, pct);
+                        }
+                    });
+
+                    const imgEl = $('#ocr-img');
+                    const ocrSource = imgEl || streamUrl;
+                    const res = await activeOcrWorker.recognize(ocrSource);
+                    const recognized = (res?.data?.text || '').trim();
+
+                    if (textResult) {
+                        textResult.value = recognized;
+                        updateStats();
+                    }
+
+                    if (activeOcrWorker) {
+                        await activeOcrWorker.terminate();
+                        activeOcrWorker = null;
+                    }
+                }
+
+                if (!isCanceled) {
+                    setProgress('Fertig!', 100);
+                    setStatus('Abgeschlossen', '✅');
+                    toast('Texterkennung erfolgreich abgeschlossen!');
+                }
+            } catch (err) {
+                console.error(err);
+                setStatus('Fehler', '❌');
+                toast(`OCR-Fehler: ${err.message}`, 'error');
+            } finally {
+                isRunning = false;
+                if (btnRun) btnRun.disabled = false;
+            }
+        }
+
+        btnRun?.addEventListener('click', runOcr);
+        langSelect?.addEventListener('change', () => {
+            if (!isRunning) runOcr();
+        });
+
+        btnCopy?.addEventListener('click', () => {
+            const text = textResult?.value || '';
+            if (!text) return;
+            navigator.clipboard?.writeText(text).then(() => {
+                toast('Text in die Zwischenablage kopiert!');
+            }).catch(() => {
+                toast('Kopieren fehlgeschlagen.', 'error');
+            });
+        });
+
+        btnSaveTxt?.addEventListener('click', async () => {
+            const text = textResult?.value || '';
+            if (!text) return;
+            const dotIdx = file.name.lastIndexOf('.');
+            const base = dotIdx > 0 ? file.name.substring(0, dotIdx) : file.name;
+            const defaultName = `${base}_ocr.txt`;
+            const fileName = prompt('Name für die Textdatei:', defaultName);
+            if (!fileName || !fileName.trim()) return;
+
+            try {
+                await apiPost('save_text', {
+                    folder_id: state.currentFolderId,
+                    name: fileName.trim(),
+                    content: text,
+                });
+                toast(`Datei „${fileName.trim()}“ im Ordner gespeichert!`);
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+
+        btnSaveNote?.addEventListener('click', async () => {
+            const text = textResult?.value || '';
+            if (!text) return;
+            const existing = (file.notes || '').trim();
+            const combined = existing 
+                ? `${existing}\n\n[OCR-Text]:\n${text}` 
+                : text;
+
+            try {
+                await apiPost('set_notes', {
+                    type: 'file',
+                    id: file.id,
+                    notes: combined,
+                });
+                file.notes = combined;
+                toast('OCR-Text als Notiz an die Datei angeheftet!');
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+
+        btnClose?.addEventListener('click', () => {
+            isCanceled = true;
+            if (activeOcrWorker) {
+                activeOcrWorker.terminate().catch(() => {});
+                activeOcrWorker = null;
+            }
+            closeModal();
+        });
+
+        // Auto-run OCR upon modal opening
+        setTimeout(() => {
+            runOcr();
+        }, 150);
     }
 
     // ZIP Inspector & Extractor Modal
