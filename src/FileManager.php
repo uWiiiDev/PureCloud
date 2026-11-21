@@ -366,6 +366,39 @@ class FileManager
             $fileStmt->execute([':uid' => $userId, ':q' => $like]);
             $files = $fileStmt->fetchAll();
 
+            // Resolve folder paths for all search results
+            $allFoldersStmt = $pdo->prepare("SELECT id, name, parent_id FROM folders WHERE owner_id = :uid AND deleted_at IS NULL");
+            $allFoldersStmt->execute([':uid' => $userId]);
+            $folderMap = [];
+            foreach ($allFoldersStmt->fetchAll() as $row) {
+                $folderMap[(int)$row['id']] = $row;
+            }
+
+            $getFolderPath = function(?int $fid) use ($folderMap): string {
+                if ($fid === null || !isset($folderMap[$fid])) {
+                    return 'Hauptverzeichnis';
+                }
+                $parts = [];
+                $curr = $fid;
+                $depth = 0;
+                while ($curr !== null && isset($folderMap[$curr]) && $depth < 20) {
+                    $parts[] = $folderMap[$curr]['name'];
+                    $curr = $folderMap[$curr]['parent_id'] !== null ? (int)$folderMap[$curr]['parent_id'] : null;
+                    $depth++;
+                }
+                return implode(' / ', array_reverse($parts));
+            };
+
+            foreach ($folders as &$f) {
+                $f['folder_path'] = $getFolderPath($f['parent_id'] !== null ? (int)$f['parent_id'] : null);
+            }
+            unset($f);
+
+            foreach ($files as &$fl) {
+                $fl['folder_path'] = $getFolderPath($fl['folder_id'] !== null ? (int)$fl['folder_id'] : null);
+            }
+            unset($fl);
+
             return [
                 'view'           => 'files',
                 'current_folder' => null,
@@ -582,6 +615,7 @@ class FileManager
                 'deleted_at'        => $r['deleted_at'] ?? null,
                 'created_at'        => $r['created_at'],
                 'updated_at'        => $r['updated_at'],
+                'folder_path'       => $r['folder_path'] ?? null,
             ];
         }
         return $out;
@@ -618,6 +652,7 @@ class FileManager
                 'created_at'        => $r['created_at'],
                 'updated_at'        => $r['updated_at'],
                 'category'          => self::categorizeFile($r['name'], $r['mime_type']),
+                'folder_path'       => $r['folder_path'] ?? null,
             ];
         }
         return $out;

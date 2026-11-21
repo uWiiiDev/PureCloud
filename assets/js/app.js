@@ -1847,6 +1847,11 @@
                                     ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
                                     ${badges}
                                 </div>
+                                ${item.folder_path ? `
+                                    <div class="item-location-subline" data-goto-folder="${item.type === 'folder' ? (item.parent_id !== null && item.parent_id !== undefined ? item.parent_id : '') : (item.folder_id !== null && item.folder_id !== undefined ? item.folder_id : '')}" title="In Ordner: ${esc(item.folder_path)} (Klicken zum Öffnen)">
+                                        📂 ${esc(item.folder_path)}
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
                     </td>
@@ -1978,6 +1983,11 @@
                         <span>${isFolder ? 'Ordner' : formatBytes(item.size_bytes)}</span>
                         ${item.version_count > 0 ? `<span class="item-version-badge" data-action="versions" title="Revisionsverlauf (${item.version_count} Vorversionen)">v${item.version_count + 1}</span>` : ''}
                     </div>
+                    ${item.folder_path ? `
+                        <div class="grid-location-subline" data-goto-folder="${item.type === 'folder' ? (item.parent_id !== null && item.parent_id !== undefined ? item.parent_id : '') : (item.folder_id !== null && item.folder_id !== undefined ? item.folder_id : '')}" title="In Ordner: ${esc(item.folder_path)} (Klicken zum Öffnen)">
+                            📂 ${esc(item.folder_path)}
+                        </div>
+                    ` : ''}
                 </div>
             `;
         }
@@ -2104,12 +2114,33 @@
                 <button type="button" class="dropdown-item" data-ctx-act="open">📂 Gruppenordner öffnen</button>
             `;
         } else {
+            // 1. Primary Actions
             itemsHtml += `
                 <button type="button" class="dropdown-item" data-ctx-act="open">
                     ${isFolder ? '📂 Ordner öffnen' : '👁️ Öffnen / Vorschau'}
                 </button>
-                <button type="button" class="dropdown-item" data-ctx-act="toggle_favorite">
-                    ${item.is_favorite ? '★ Aus Favoriten entfernen' : '⭐ Zu Favoriten hinzufügen'}
+            `;
+
+            // Open location if in search or if item has folder_path
+            if (item.folder_path || (state.search && state.search.trim() !== '')) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="open_location" title="Speicherort öffnen (${esc(item.folder_path || 'Hauptverzeichnis')})">
+                        📂 Speicherort öffnen
+                    </button>
+                `;
+            }
+
+            if (state.permission === 'owner' || item.is_group_folder || state.isGroupTree) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="share">
+                        ${(item.is_group_folder || state.isGroupTree) ? '🔗 Teilen (Öffentlicher Link)' : '🔗 Teilen (Link / Benutzer)'}
+                    </button>
+                `;
+            }
+
+            itemsHtml += `
+                <button type="button" class="dropdown-item" data-ctx-act="download">
+                    ${targetItems.length > 1 ? `📦 Als ZIP herunterladen (${targetItems.length})` : (isFolder ? '📦 Als ZIP herunterladen' : '⬇️ Herunterladen')}
                 </button>
             `;
 
@@ -2143,8 +2174,8 @@
                     </button>
                 `;
             }
-            itemsHtml += `<div class="dropdown-divider"></div>`;
 
+            // Color tag bar
             if (['owner', 'write'].includes(state.permission) && !item.is_group_folder) {
                 itemsHtml += `
                     <div class="color-picker-bar">
@@ -2157,154 +2188,162 @@
                         <button type="button" class="color-dot-btn" data-color="blue" style="background:#3b82f6" title="Blau"></button>
                         <button type="button" class="color-dot-btn" data-color="purple" style="background:#a855f7" title="Lila"></button>
                     </div>
-                    <button type="button" class="dropdown-item" data-ctx-act="notes">
-                        📝 ${item.notes ? 'Notiz bearbeiten' : 'Notiz hinzufügen'}
-                    </button>
-                `;
-            }
-            if (!isFolder) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="versions">
-                        🕒 Revisionsverlauf ${item.version_count > 0 ? `(${item.version_count + 1})` : ''}
-                    </button>
                 `;
             }
 
-            if (state.permission === 'owner' || item.is_group_folder || state.isGroupTree) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="share">
-                        ${(item.is_group_folder || state.isGroupTree) ? '🔗 Teilen (Öffentlicher Link)' : '🔗 Teilen (Link / Benutzer)'}
-                    </button>
-                `;
-            }
-            itemsHtml += `
-                <button type="button" class="dropdown-item" data-ctx-act="download">
-                    ${targetItems.length > 1 ? `📦 Als ZIP herunterladen (${targetItems.length})` : (isFolder ? '📦 Als ZIP herunterladen' : '⬇️ Herunterladen')}
-                </button>
-            `;
+            itemsHtml += `<div class="dropdown-divider"></div>`;
+
+            // -------------------------------------------------------------
+            // SUBMENU 1: 🛠️ Werkzeuge & Bearbeiten (Dateispezifische Tools)
+            // -------------------------------------------------------------
+            let toolsHtml = '';
             if (!isFolder && item.category === 'zip' && !item.is_encrypted) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="inspect_zip">
-                        🔍 Archiv durchsuchen (ZIP-Inspektor)
-                    </button>
-                    <button type="button" class="dropdown-item" data-ctx-act="unzip">
-                        📂 ZIP hier entpacken
-                    </button>
-                `;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="inspect_zip">🔍 Archiv durchsuchen (Inspektor)</button>`;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="unzip">📂 ZIP hier entpacken</button>`;
             }
             if (!isFolder && !item.is_encrypted && (item.name.toLowerCase().endsWith('.csv') || item.mime_type === 'text/csv')) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="csv_chart">
-                        📊 Diagramm erstellen (Chart Builder)
-                    </button>
-                `;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="csv_chart">📊 Diagramm erstellen (Chart Builder)</button>`;
             }
             if (!isFolder && item.category === 'pdf' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="rotate_pdf">
-                        🔄 Seiten um 90° drehen
-                    </button>
-                `;
-            }
-            if (!isFolder && item.category === 'audio') {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="play_audio">
-                        🎵 Im Hintergrund abspielen
-                    </button>
-                `;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="sign_pdf">✍️ Unterschreiben / Signieren</button>`;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="rotate_pdf">🔄 Seiten um 90° drehen</button>`;
             }
             if (!isFolder && (item.category === 'image' || item.category === 'pdf') && !item.is_encrypted) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="ocr">
-                        🔍 Text erkennen (OCR)
-                    </button>
-                `;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="ocr">🔍 Text erkennen (OCR)</button>`;
             }
             if (!isFolder && item.category === 'image' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="optimize_image">
-                        🗜️ Bild optimieren (WebP)
-                    </button>
-                `;
-            }
-            if (isFolder && !isTrash) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="storage_radar">
-                        📊 Speicherplatz-Radar
-                    </button>
-                `;
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="optimize_image">🗜️ Bild optimieren (WebP)</button>`;
             }
             if (!isFolder && item.category === 'image') {
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="exif_data">🧭 EXIF & GPS-Daten</button>`;
+            }
+            if (!isFolder && item.category === 'audio') {
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="play_audio">🎵 Im Hintergrund abspielen</button>`;
+                if (!isTrash) {
+                    toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="speech_dictate">🗣️ Audio transkribieren</button>`;
+                }
+            }
+            if (!isFolder && item.category === 'text' && !isTrash) {
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="save_as_template">📄 Als Vorlage merken</button>`;
+            }
+            if (isFolder && !isTrash) {
+                toolsHtml += `<button type="button" class="dropdown-item" data-ctx-act="storage_radar">📊 Speicherplatz-Radar</button>`;
+            }
+
+            if (toolsHtml) {
                 itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="exif_data">
-                        🧭 EXIF & GPS-Daten
-                    </button>
+                    <div class="ctx-submenu-item">
+                        <div class="dropdown-item ctx-submenu-trigger">
+                            <span>🛠️ Werkzeuge</span>
+                            <span class="ctx-submenu-arrow">▸</span>
+                        </div>
+                        <div class="ctx-submenu">
+                            ${toolsHtml}
+                        </div>
+                    </div>
                 `;
             }
-            if (!isFolder && item.category === 'pdf' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="sign_pdf">
-                        ✍️ Unterschreiben / Signieren
-                    </button>
-                `;
-            }
-            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="toggle_lock">
-                        ${item.is_locked ? '🔓 Schreibschutz aufheben' : '🔒 Schreibschutz aktivieren'}
-                    </button>
-                `;
-            }
-            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="create_alias">
-                        🔗 Verknüpfung erstellen
-                    </button>
-                `;
-            }
+
+            // -------------------------------------------------------------
+            // SUBMENU 2: 📁 Organisieren & Verknüpfen
+            // -------------------------------------------------------------
+            let orgHtml = `
+                <button type="button" class="dropdown-item" data-ctx-act="toggle_favorite">
+                    ${item.is_favorite ? '★ Aus Favoriten entfernen' : '⭐ Zu Favoriten hinzufügen'}
+                </button>
+            `;
             if (!isTrash && !item.is_group_folder) {
-                itemsHtml += `
+                orgHtml += `
                     <button type="button" class="dropdown-item" data-ctx-act="toggle_pin">
                         ${item.is_pinned ? '📌 Nicht mehr anheften' : '📌 Oben anheften'}
                     </button>
                 `;
             }
             if (!isTrash && !isFolder) {
-                itemsHtml += `
+                orgHtml += `
                     <button type="button" class="dropdown-item" data-ctx-act="add_to_bundle">
                         📦 In Sammelmappe ablegen
                     </button>
                 `;
             }
-            if (!isFolder && item.category === 'text' && !isTrash) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="save_as_template">
-                        ⭐ Als Vorlage merken
+            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
+                orgHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="create_alias">
+                        🔗 Verknüpfung erstellen
                     </button>
                 `;
             }
-            if (!isFolder && item.category === 'audio' && !isTrash) {
-                itemsHtml += `
-                    <button type="button" class="dropdown-item" data-ctx-act="speech_dictate">
-                        🗣️ Audio transkribieren
+            if (['owner', 'write'].includes(state.permission) && !item.is_group_folder) {
+                orgHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="notes">
+                        📝 ${item.notes ? 'Notiz bearbeiten' : 'Notiz hinzufügen'}
+                    </button>
+                `;
+            }
+            if (!isFolder) {
+                orgHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="versions">
+                        🕒 Revisionsverlauf ${item.version_count > 0 ? `(${item.version_count + 1})` : ''}
+                    </button>
+                `;
+            }
+
+            itemsHtml += `
+                <div class="ctx-submenu-item">
+                    <div class="dropdown-item ctx-submenu-trigger">
+                        <span>📁 Organisieren</span>
+                        <span class="ctx-submenu-arrow">▸</span>
+                    </div>
+                    <div class="ctx-submenu">
+                        ${orgHtml}
+                    </div>
+                </div>
+            `;
+
+            // -------------------------------------------------------------
+            // SUBMENU 3: 🛡️ Sicherheit & Tresor
+            // -------------------------------------------------------------
+            let secHtml = '';
+            if (!isTrash && !item.is_group_folder && ['owner', 'write'].includes(state.permission)) {
+                secHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="toggle_lock">
+                        ${item.is_locked ? '🔓 Schreibschutz aufheben' : '🔒 Schreibschutz aktivieren'}
                     </button>
                 `;
             }
             if (['owner', 'write'].includes(state.permission)) {
                 if (isFolder) {
-                    itemsHtml += `
+                    secHtml += `
                         <button type="button" class="dropdown-item" data-ctx-act="vault">
-                            ${item.encrypted_count > 0 ? '🔓 Ordner im Tresor ver-/entschlüsseln' : '🔒 Ordner im Tresor verschlüsseln (AES-256)'}
+                            ${item.encrypted_count > 0 ? '🔓 Tresor ver-/entschlüsseln' : '🔒 Im Tresor verschlüsseln (AES-256)'}
                         </button>
                     `;
                 } else {
-                    itemsHtml += `
+                    secHtml += `
                         <button type="button" class="dropdown-item" data-ctx-act="vault">
                             ${item.is_encrypted ? '🔓 Tresor entschlüsseln' : '🔒 Im Tresor verschlüsseln (AES-256)'}
                         </button>
                     `;
                 }
             }
+
+            if (secHtml) {
+                itemsHtml += `
+                    <div class="ctx-submenu-item">
+                        <div class="dropdown-item ctx-submenu-trigger">
+                            <span>🛡️ Sicherheit</span>
+                            <span class="ctx-submenu-arrow">▸</span>
+                        </div>
+                        <div class="ctx-submenu">
+                            ${secHtml}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // -------------------------------------------------------------
+            // Rename & Danger Zone (Papierkorb & Shredder)
+            // -------------------------------------------------------------
             if (['owner', 'write'].includes(state.permission) && !item.is_group_folder) {
                 itemsHtml += `<div class="dropdown-divider"></div>`;
                 if (targetItems.length > 1) {
@@ -2320,6 +2359,35 @@
         menu.innerHTML = itemsHtml;
         backdrop.classList.remove('hidden');
         menu.classList.remove('hidden');
+
+        // Submenu hover & click logic
+        $$('.ctx-submenu-item', menu).forEach((itemEl) => {
+            const sub = itemEl.querySelector('.ctx-submenu');
+            const trigger = itemEl.querySelector('.ctx-submenu-trigger');
+            if (!sub || !trigger) return;
+
+            const adjustFlip = () => {
+                const itemRect = itemEl.getBoundingClientRect();
+                if (itemRect.right + 220 > window.innerWidth) {
+                    sub.classList.add('flip-left');
+                } else {
+                    sub.classList.remove('flip-left');
+                }
+            };
+
+            itemEl.addEventListener('mouseenter', adjustFlip);
+
+            trigger.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const wasOpen = itemEl.classList.contains('open');
+                $$('.ctx-submenu-item', menu).forEach(el => el.classList.remove('open'));
+                if (!wasOpen) {
+                    itemEl.classList.add('open');
+                    adjustFlip();
+                }
+            });
+        });
 
         // Position near cursor on desktop (CSS media query overrides to bottom sheet on mobile <= 768px)
         const rect = menu.getBoundingClientRect();
@@ -2729,6 +2797,21 @@
             });
         });
 
+        // Click on Location Subline -> Jump to Folder
+        $$('[data-goto-folder]', container).forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const raw = el.dataset.gotoFolder;
+                const fid = (raw === '' || raw === null || raw === undefined) ? null : parseInt(raw, 10);
+                state.search = '';
+                const sinp = $('#search-input');
+                if (sinp) sinp.value = '';
+                state.currentFolderId = fid;
+                loadCurrentView();
+            });
+        });
+
         // Click to Open Folder or File Preview
         $$('[data-open]', container).forEach((el) => {
             el.addEventListener('click', (e) => {
@@ -2910,6 +2993,18 @@
                 } else {
                     window.location.href = `api.php?action=download&id=${item.id}`;
                 }
+                break;
+
+            case 'open_location':
+                const rawFid = item.type === 'folder'
+                    ? (item.parent_id !== undefined && item.parent_id !== null ? item.parent_id : null)
+                    : (item.folder_id !== undefined && item.folder_id !== null ? item.folder_id : null);
+                state.search = '';
+                const searchInp = $('#search-input');
+                if (searchInp) searchInp.value = '';
+                state.currentFolderId = rawFid;
+                loadCurrentView();
+                toast(item.folder_path ? `Speicherort „${item.folder_path}“ geöffnet.` : 'Speicherort geöffnet.');
                 break;
 
             case 'inspect_zip':
