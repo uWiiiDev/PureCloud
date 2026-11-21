@@ -2504,3 +2504,103 @@ html[data-theme="light"] .alert-success {
     top: 0;
     font-weight: 600;
 }
+
+/* ==========================================================================
+   Code Preview, Syntax Highlighting & Beautifier UI
+   ========================================================================== */
+.code-editor-header-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 0.65rem;
+    font-size: 0.82rem;
+}
+.code-mode-pills {
+    display: inline-flex;
+    background: rgba(148, 163, 184, 0.12);
+    padding: 2px;
+    border-radius: 6px;
+    gap: 2px;
+}
+.code-mode-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.25rem 0.65rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.code-mode-btn.active {
+    background: var(--primary);
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.code-minified-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.85rem;
+    margin-bottom: 0.65rem;
+    font-size: 0.82rem;
+    color: #f59e0b;
+}
+.code-preview-pane {
+    max-height: 60vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #181c24;
+    margin-bottom: 0.75rem;
+}
+.code-preview-pane pre {
+    margin: 0 !important;
+    padding: 1rem 1rem 1rem 3.8rem !important;
+    background: transparent !important;
+    font-size: 0.84rem !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    line-height: 1.5 !important;
+    min-height: 140px;
+}
+.code-preview-pane pre.code-wrap,
+.code-editor-textarea.code-wrap {
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+}
+.code-editor-textarea {
+    width: 100%;
+    height: 55vh;
+    min-height: 250px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    padding: 0.85rem;
+    background: #181c24;
+    color: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    tab-size: 4;
+    resize: vertical;
+    white-space: pre;
+    overflow: auto;
+    box-sizing: border-box;
+}
+.line-numbers-rows {
+    border-right: 1px solid rgba(148, 163, 184, 0.2) !important;
+    padding-right: 8px !important;
+}
+.line-numbers-rows > span:before {
+    color: #64748b !important;
+}

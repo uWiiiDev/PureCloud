@@ -3466,37 +3466,316 @@
         openSpeechDictationModal();
     });
 
+    function detectCodeLanguage(fileName) {
+        const ext = (fileName.split('.').pop() || '').toLowerCase();
+        const map = {
+            'js': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript', 'jsx': 'jsx',
+            'ts': 'typescript', 'tsx': 'tsx',
+            'json': 'json',
+            'html': 'markup', 'htm': 'markup', 'xml': 'markup', 'svg': 'markup',
+            'css': 'css', 'scss': 'scss', 'less': 'less',
+            'php': 'php',
+            'py': 'python',
+            'sql': 'sql',
+            'sh': 'bash', 'bash': 'bash', 'zsh': 'bash',
+            'md': 'markdown', 'markdown': 'markdown',
+            'yaml': 'yaml', 'yml': 'yaml',
+            'ini': 'ini', 'conf': 'ini', 'env': 'bash',
+            'c': 'c', 'h': 'c', 'cpp': 'cpp', 'hpp': 'cpp',
+            'cs': 'csharp', 'java': 'java', 'go': 'go', 'rs': 'rust',
+            'dockerfile': 'docker',
+            'txt': 'none', 'log': 'none',
+        };
+        return map[ext] || 'none';
+    }
+
+    function isCodeMinified(text) {
+        if (!text || text.length < 160) return false;
+        const lines = text.split('\n');
+        if (lines.length <= 2 && text.length > 250) return true;
+        for (const l of lines.slice(0, 8)) {
+            if (l.length > 350) return true;
+        }
+        return false;
+    }
+
+    async function formatCodeContent(code, lang) {
+        const cleanLang = (lang || '').toLowerCase();
+        // 1. JSON
+        if (cleanLang === 'json') {
+            try {
+                const parsed = JSON.parse(code);
+                return JSON.stringify(parsed, null, 2);
+            } catch (err) {
+                throw new Error(`Ungültiges JSON-Format: ${err.message}`);
+            }
+        }
+
+        // 2. CSS / SCSS
+        if (['css', 'scss', 'less'].includes(cleanLang)) {
+            await ensureBeautifier();
+            if (window.css_beautify) {
+                return window.css_beautify(code, {
+                    indent_size: 2,
+                    indent_char: ' ',
+                    max_preserve_newlines: 2,
+                    preserve_newlines: true,
+                });
+            }
+        }
+
+        // 3. HTML / XML / SVG
+        if (['markup', 'html', 'xml', 'svg'].includes(cleanLang)) {
+            await ensureBeautifier();
+            if (window.html_beautify) {
+                return window.html_beautify(code, {
+                    indent_size: 2,
+                    indent_char: ' ',
+                    max_preserve_newlines: 2,
+                    preserve_newlines: true,
+                    indent_inner_html: true,
+                });
+            }
+        }
+
+        // 4. JS / TS / PHP / Python / Bash / SQL / general scripts
+        await ensureBeautifier();
+        if (window.js_beautify) {
+            return window.js_beautify(code, {
+                indent_size: 4,
+                indent_char: ' ',
+                max_preserve_newlines: 2,
+                preserve_newlines: true,
+                space_in_paren: false,
+                jslint_happy: true,
+            });
+        }
+
+        return code;
+    }
+
     function openTextEditorModal(fileId, fileName, content, readOnly = false) {
-        openModal(fileId ? `Textdatei: ${fileName}` : 'Neue Textdatei erstellen', `
+        let currentLang = detectCodeLanguage(fileName);
+        let activeMode = fileId ? 'preview' : 'edit';
+        let isWrapped = false;
+        let currentContent = content;
+
+        const langOptions = [
+            { id: 'javascript', name: 'JavaScript (.js)' },
+            { id: 'typescript', name: 'TypeScript (.ts)' },
+            { id: 'json', name: 'JSON (.json)' },
+            { id: 'html', name: 'HTML / XML (.html, .xml)' },
+            { id: 'css', name: 'CSS / SCSS (.css)' },
+            { id: 'php', name: 'PHP (.php)' },
+            { id: 'python', name: 'Python (.py)' },
+            { id: 'sql', name: 'SQL (.sql)' },
+            { id: 'bash', name: 'Shell / Bash (.sh, .env)' },
+            { id: 'markdown', name: 'Markdown (.md)' },
+            { id: 'yaml', name: 'YAML (.yml)' },
+            { id: 'ini', name: 'INI / Config (.ini)' },
+            { id: 'c', name: 'C / C++ (.c, .cpp)' },
+            { id: 'java', name: 'Java (.java)' },
+            { id: 'go', name: 'Go (.go)' },
+            { id: 'rust', name: 'Rust (.rs)' },
+            { id: 'none', name: 'Reiner Text (Plain Text)' },
+        ];
+
+        const showMinifiedAlert = fileId && isCodeMinified(currentContent);
+
+        openModal(fileId ? `📄 ${esc(fileName)}` : '📝 Neue Datei erstellen', `
             <form id="text-editor-form">
                 ${!fileId ? `
-                <div class="form-group">
-                    <label>Dateiname</label>
-                    <input type="text" name="name" class="input" value="${esc(fileName)}" required>
+                <div class="form-group" style="margin-bottom:0.65rem">
+                    <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:0.25rem">Dateiname</label>
+                    <input type="text" name="name" class="input" value="${esc(fileName)}" placeholder="z. B. script.js, config.json, note.md" required>
                 </div>` : ''}
-                <div class="form-group">
-                    <textarea name="content" class="input editor-textarea" ${readOnly ? 'readonly' : ''}>${esc(content)}</textarea>
+
+                <!-- Code Toolbar -->
+                <div class="code-editor-header-bar">
+                    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                        <div class="code-mode-pills">
+                            <button type="button" class="code-mode-btn ${activeMode === 'preview' ? 'active' : ''}" id="btn-mode-preview">👁️ Vorschau</button>
+                            <button type="button" class="code-mode-btn ${activeMode === 'edit' ? 'active' : ''}" id="btn-mode-edit">✏️ Bearbeiten</button>
+                        </div>
+                        <select id="code-sel-lang" class="input" style="height:28px;font-size:0.78rem;padding:0.15rem 0.5rem">
+                            ${langOptions.map(l => `<option value="${l.id}" ${l.id === currentLang ? 'selected' : ''}>${l.name}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap">
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-code-format" title="Code automatisch einrücken & formatieren">✨ Formatieren</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-code-wrap" title="Zeilenumbruch umschalten">↩ Umbruch</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-code-copy" title="Code in Zwischenablage kopieren">📋 Kopieren</button>
+                        <span class="muted small" id="code-stats-info" style="margin-left:0.35rem"></span>
+                    </div>
                 </div>
+
+                ${showMinifiedAlert ? `
+                <div id="code-minified-alert" class="code-minified-banner">
+                    <span>⚡ Diese Datei scheint minifiziert oder einzeilig zu sein.</span>
+                    <button type="button" class="btn btn-sm btn-primary" id="btn-auto-beautify">✨ Jetzt lesbar formatieren</button>
+                </div>` : ''}
+
+                <!-- Code Viewport: Preview Pane vs Edit Pane -->
+                <div id="code-preview-pane" class="code-preview-pane ${activeMode === 'preview' ? '' : 'hidden'}">
+                    <pre id="code-pre-box" class="line-numbers language-${currentLang}"><code id="code-block" class="language-${currentLang}"></code></pre>
+                </div>
+
+                <div id="code-edit-pane" class="code-edit-pane ${activeMode === 'edit' ? '' : 'hidden'}" style="margin-bottom:0.75rem">
+                    <textarea id="code-textarea" name="content" class="code-editor-textarea" spellcheck="false" ${readOnly ? 'readonly' : ''}>${esc(currentContent)}</textarea>
+                </div>
+
+                <!-- Footer Actions -->
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem">
                     <div style="display:flex;gap:0.5rem;align-items:center">
-                        ${fileId ? `<a class="btn btn-ghost" href="api.php?action=download&id=${fileId}">⬇️ Herunterladen</a>` : ''}
-                        ${fileName.toLowerCase().endsWith('.csv') ? `<button type="button" class="btn btn-ghost" id="btn-switch-to-chart">📊 Als Diagramm visualisieren</button>` : ''}
+                        ${fileId ? `<a class="btn btn-ghost btn-sm" href="api.php?action=download&id=${fileId}">⬇️ Herunterladen</a>` : ''}
+                        ${fileName.toLowerCase().endsWith('.csv') ? `<button type="button" class="btn btn-ghost btn-sm" id="btn-switch-to-chart">📊 Als Diagramm visualisieren</button>` : ''}
                     </div>
-                    ${!readOnly ? `<button type="submit" class="btn btn-primary">💾 Speichern</button>` : ''}
+                    ${!readOnly ? `<button type="submit" class="btn btn-primary" id="btn-save-code">💾 Speichern</button>` : '<span class="muted small">Schreibgeschützt</span>'}
                 </div>
             </form>
-        `, true);
+        `, 'lg');
+
+        const textarea = $('#code-textarea');
+        const preBox = $('#code-pre-box');
+        const codeBlock = $('#code-block');
+        const previewPane = $('#code-preview-pane');
+        const editPane = $('#code-edit-pane');
+        const btnModePreview = $('#btn-mode-preview');
+        const btnModeEdit = $('#btn-mode-edit');
+        const btnFormat = $('#btn-code-format');
+        const btnAutoBeautify = $('#btn-auto-beautify');
+        const btnWrap = $('#btn-code-wrap');
+        const btnCopy = $('#btn-code-copy');
+        const selLang = $('#code-sel-lang');
+        const statsInfo = $('#code-stats-info');
+
+        function updateStats() {
+            const txt = textarea ? textarea.value : currentContent;
+            const lines = txt.split('\n').length;
+            const chars = txt.length;
+            if (statsInfo) {
+                statsInfo.textContent = `${lines} Zeile${lines === 1 ? '' : 'n'} · ${chars.toLocaleString('de-DE')} Z.`;
+            }
+        }
+
+        async function updatePrismPreview(text, lang) {
+            await ensurePrism();
+            if (!preBox || !codeBlock) return;
+            preBox.className = `line-numbers language-${lang} ${isWrapped ? 'code-wrap' : ''}`;
+            codeBlock.className = `language-${lang}`;
+            codeBlock.textContent = text;
+            if (window.Prism) {
+                window.Prism.highlightElement(codeBlock);
+            }
+        }
+
+        async function setMode(mode) {
+            activeMode = mode;
+            if (mode === 'preview') {
+                btnModePreview?.classList.add('active');
+                btnModeEdit?.classList.remove('active');
+                currentContent = textarea.value;
+                await updatePrismPreview(currentContent, currentLang);
+                previewPane?.classList.remove('hidden');
+                editPane?.classList.add('hidden');
+            } else {
+                btnModeEdit?.classList.add('active');
+                btnModePreview?.classList.remove('active');
+                previewPane?.classList.add('hidden');
+                editPane?.classList.remove('hidden');
+                textarea?.focus();
+            }
+        }
+
+        async function doFormat() {
+            if (btnFormat) {
+                btnFormat.disabled = true;
+                btnFormat.textContent = 'Formatiere…';
+            }
+            try {
+                const textToFormat = textarea.value;
+                const formatted = await formatCodeContent(textToFormat, currentLang);
+                textarea.value = formatted;
+                currentContent = formatted;
+                $('#code-minified-alert')?.remove();
+                updateStats();
+                if (activeMode === 'preview') {
+                    await updatePrismPreview(formatted, currentLang);
+                }
+                toast('Code sauber formatiert und eingerückt.');
+            } catch (err) {
+                toast(err.message, 'error');
+            } finally {
+                if (btnFormat) {
+                    btnFormat.disabled = false;
+                    btnFormat.textContent = '✨ Formatieren';
+                }
+            }
+        }
+
+        // Initialize preview if activeMode is preview
+        if (activeMode === 'preview') {
+            updatePrismPreview(currentContent, currentLang);
+        }
+        updateStats();
+
+        // Mode switch events
+        btnModePreview?.addEventListener('click', () => setMode('preview'));
+        btnModeEdit?.addEventListener('click', () => setMode('edit'));
+
+        // Format actions
+        btnFormat?.addEventListener('click', doFormat);
+        btnAutoBeautify?.addEventListener('click', doFormat);
+
+        // Word wrap toggle
+        btnWrap?.addEventListener('click', () => {
+            isWrapped = !isWrapped;
+            preBox?.classList.toggle('code-wrap', isWrapped);
+            textarea?.classList.toggle('code-wrap', isWrapped);
+            toast(isWrapped ? 'Zeilenumbruch aktiviert.' : 'Zeilenumbruch deaktiviert.');
+        });
+
+        // Copy to clipboard
+        btnCopy?.addEventListener('click', () => {
+            const txt = textarea ? textarea.value : currentContent;
+            navigator.clipboard?.writeText(txt).then(() => {
+                toast('Code in die Zwischenablage kopiert.');
+            });
+        });
+
+        // Language selection
+        selLang?.addEventListener('change', async () => {
+            currentLang = selLang.value;
+            if (activeMode === 'preview') {
+                await updatePrismPreview(textarea.value, currentLang);
+            }
+        });
+
+        // Tab key support in textarea (inserts 4 spaces instead of losing focus)
+        textarea?.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                textarea.value = textarea.value.substring(0, start) + '    ' + textarea.value.substring(end);
+                textarea.selectionStart = textarea.selectionEnd = start + 4;
+                updateStats();
+            }
+        });
+
+        textarea?.addEventListener('input', updateStats);
 
         $('#btn-switch-to-chart')?.addEventListener('click', () => {
-            const currentContent = $('#text-editor-form textarea[name="content"]')?.value || content;
+            const val = textarea?.value || currentContent;
             closeModal();
-            openCsvChartModal({ id: fileId, name: fileName }, currentContent);
+            openCsvChartModal({ id: fileId, name: fileName }, val);
         });
 
         $('#text-editor-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = fileId ? fileName : e.target.name.value.trim();
-            const text = e.target.content.value;
+            const text = textarea ? textarea.value : currentContent;
             try {
                 await apiPost('save_text', {
                     folder_id: state.currentFolderId,
@@ -3505,7 +3784,7 @@
                     content: text,
                 });
                 closeModal();
-                toast('Datei gespeichert.');
+                toast('Datei erfolgreich gespeichert.');
                 loadCurrentView();
             } catch (err) {
                 toast(err.message, 'error');
@@ -3642,6 +3921,41 @@
             s.onerror = () => reject(new Error(`Fehler beim Laden von ${src}`));
             document.head.appendChild(s);
         });
+    }
+
+    function loadCssOnce(href) {
+        if (document.querySelector(`link[href="${href}"]`)) return;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        document.head.appendChild(link);
+    }
+
+    async function ensurePrism() {
+        loadCssOnce('https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css');
+        loadCssOnce('https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css');
+        if (!window.Prism) {
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js');
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js');
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js');
+            if (window.Prism?.plugins?.autoloader) {
+                window.Prism.plugins.autoloader.languages_path = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/';
+            }
+        }
+        return window.Prism;
+    }
+
+    async function ensureBeautifier() {
+        if (!window.js_beautify) {
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.9/beautify.min.js');
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.9/beautify-css.min.js');
+            await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.9/beautify-html.min.js');
+        }
+        return {
+            js: window.js_beautify,
+            css: window.css_beautify,
+            html: window.html_beautify,
+        };
     }
 
     async function ensureTesseract() {
