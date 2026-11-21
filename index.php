@@ -269,7 +269,8 @@ $bootData = [
 
                 <div class="search-wrap">
                     <span class="search-icon">🔍</span>
-                    <input type="search" id="search-input" class="search-input" placeholder="Suchen…">
+                    <input type="search" id="search-input" class="search-input" placeholder="Suchen… (Strg+K)">
+                    <kbd class="search-kbd hide-mobile">Strg+K</kbd>
                 </div>
 
                 <div class="top-actions" id="folder-write-actions">
@@ -315,6 +316,7 @@ $bootData = [
                     <span id="bulk-count" class="bulk-count">0 ausgewählt</span>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-copy" title="Auswahl kopieren">📋 Kopieren</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-cut" title="Auswahl ausschneiden">✂️ Ausschneiden</button>
+                    <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-merge-pdf" title="Ausgewählte PDFs zusammenführen">📄 PDFs zusammenführen</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-download">📦 ZIP</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-trash">🗑️ Löschen</button>
                     <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-restore">♻️ Wiederherstellen</button>

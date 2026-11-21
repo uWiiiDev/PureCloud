@@ -367,12 +367,24 @@
         if (e.target.id === 'modal-backdrop') closeModal();
     });
     document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            openSpotlight();
+            return;
+        }
         if (e.key === 'Escape' && !$('#modal-backdrop').classList.contains('hidden')) {
             closeModal();
         }
     });
 
     window.addEventListener('popstate', (e) => {
+        // 0. Close spotlight if open
+        if (spotlightEl && !spotlightEl.classList.contains('hidden')) {
+            closeSpotlight();
+            if (lastHistoryState) history.pushState(lastHistoryState, '');
+            return;
+        }
+
         // 1. Close mobile sidebar if open
         if ($('#sidebar')?.classList.contains('open')) {
             setMobileSidebarOpen(false);
@@ -447,6 +459,225 @@
             return '';
         }
     });
+
+    // Spotlight Quick Search (Strg + K)
+    let spotlightEl = null;
+    let spotlightActiveIdx = -1;
+    let spotlightItems = [];
+
+    function openSpotlight() {
+        if (!state.user) return;
+        closeContextMenu();
+        if (spotlightEl) {
+            spotlightEl.classList.remove('hidden');
+            const inp = $('#spotlight-input', spotlightEl);
+            if (inp) {
+                inp.value = '';
+                inp.focus();
+            }
+            renderSpotlightResults({ folders: [], files: [] });
+            return;
+        }
+
+        spotlightEl = document.createElement('div');
+        spotlightEl.className = 'spotlight-backdrop';
+        spotlightEl.innerHTML = `
+            <div class="spotlight-dialog" onclick="event.stopPropagation()">
+                <div class="spotlight-input-wrap">
+                    <span style="font-size:1.15rem">🔍</span>
+                    <input type="text" id="spotlight-input" class="spotlight-input" placeholder="Schnellsuche nach Dateien, Ordnern, Notizen…" autocomplete="off">
+                    <kbd class="search-kbd" id="btn-spotlight-esc" style="cursor:pointer;pointer-events:auto">Esc</kbd>
+                </div>
+                <div class="spotlight-results" id="spotlight-results">
+                    <p class="muted small" style="padding:1rem;text-align:center;margin:0">Tippen Sie einen Begriff ein, um blitzschnell zu suchen…</p>
+                </div>
+                <div class="spotlight-footer">
+                    <span>Navigation: <strong>↑</strong> <strong>↓</strong> · Auswählen: <strong>Enter</strong></span>
+                    <span>PureCloud Schnellsuche</span>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(spotlightEl);
+
+        spotlightEl.addEventListener('click', (e) => {
+            if (e.target === spotlightEl) closeSpotlight();
+        });
+        $('#btn-spotlight-esc', spotlightEl)?.addEventListener('click', closeSpotlight);
+
+        const inp = $('#spotlight-input', spotlightEl);
+        let debounceTimer = null;
+
+        inp.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            const q = inp.value.trim();
+            if (q.length === 0) {
+                $('#spotlight-results', spotlightEl).innerHTML = '<p class="muted small" style="padding:1rem;text-align:center;margin:0">Tippen Sie einen Begriff ein, um blitzschnell zu suchen…</p>';
+                spotlightItems = [];
+                spotlightActiveIdx = -1;
+                return;
+            }
+            debounceTimer = setTimeout(async () => {
+                try {
+                    const res = await apiGet({ action: 'quick_search', q });
+                    renderSpotlightResults(res.data);
+                } catch (err) {
+                    console.warn('Quick search failed:', err);
+                }
+            }, 100);
+        });
+
+        inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeSpotlight();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                navigateSpotlight(1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                navigateSpotlight(-1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                executeSpotlightSelection();
+            }
+        });
+
+        inp.focus();
+    }
+
+    function closeSpotlight() {
+        if (spotlightEl) {
+            spotlightEl.classList.add('hidden');
+        }
+    }
+
+    function renderSpotlightResults(data) {
+        const resultsBox = $('#spotlight-results', spotlightEl);
+        if (!resultsBox) return;
+
+        const folders = data.folders || [];
+        const files = data.files || [];
+        spotlightItems = [
+            ...folders.map((f) => ({ ...f, itemType: 'folder' })),
+            ...files.map((fl) => ({ ...fl, itemType: 'file' })),
+        ];
+        spotlightActiveIdx = spotlightItems.length > 0 ? 0 : -1;
+
+        if (spotlightItems.length === 0) {
+            resultsBox.innerHTML = '<p class="muted small" style="padding:1rem;text-align:center;margin:0">Keine passenden Einträge gefunden.</p>';
+            return;
+        }
+
+        resultsBox.innerHTML = spotlightItems.map((it, idx) => {
+            const isF = it.itemType === 'folder';
+            const icon = isF ? '📁' : fileIcon(it);
+            const sub = isF
+                ? `Ordnerpfad: ${esc(it.path || it.name)}`
+                : `${formatBytes(it.size_bytes)} · in ${esc(it.folder_name || 'Hauptverzeichnis')}`;
+            return `
+                <div class="spotlight-item ${idx === 0 ? 'active' : ''}" data-sp-idx="${idx}">
+                    <div class="spotlight-item-icon">${icon}</div>
+                    <div class="spotlight-item-text">
+                        <div class="spotlight-item-name">
+                            ${it.color_tag ? `<span class="color-tag-dot color-${esc(it.color_tag)}"></span>` : ''}
+                            <span>${esc(it.name)}</span>
+                            ${it.notes ? '<span class="item-note-icon">📝</span>' : ''}
+                        </div>
+                        <div class="spotlight-item-sub">${sub}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        $$('[data-sp-idx]', resultsBox).forEach((el) => {
+            el.addEventListener('click', () => {
+                spotlightActiveIdx = Number(el.dataset.spIdx);
+                executeSpotlightSelection();
+            });
+        });
+    }
+
+    function navigateSpotlight(delta) {
+        if (spotlightItems.length === 0) return;
+        spotlightActiveIdx = (spotlightActiveIdx + delta + spotlightItems.length) % spotlightItems.length;
+        $$('.spotlight-item', spotlightEl).forEach((el, idx) => {
+            el.classList.toggle('active', idx === spotlightActiveIdx);
+            if (idx === spotlightActiveIdx) el.scrollIntoView({ block: 'nearest' });
+        });
+    }
+
+    function executeSpotlightSelection() {
+        if (spotlightActiveIdx < 0 || spotlightActiveIdx >= spotlightItems.length) return;
+        const it = spotlightItems[spotlightActiveIdx];
+        closeSpotlight();
+        if (it.itemType === 'folder') {
+            state.view = 'files';
+            state.currentFolderId = it.id;
+            state.search = '';
+            $('#search-input').value = '';
+            setActiveNavView('files');
+            loadCurrentView();
+        } else {
+            openFileModal(it);
+        }
+    }
+
+    // QR-Code Modal Helper
+    async function showQrModal(url, title = '📱 QR-Code für Freigabe') {
+        try {
+            const res = await apiGet({ action: 'share_qr', url });
+            openModal(title, `
+                <div style="text-align:center;padding:0.75rem 0">
+                    <div style="display:inline-block;padding:12px;background:#ffffff;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.12)">
+                        ${res.qr_svg}
+                    </div>
+                    <p class="small muted" style="margin:1rem auto 0.75rem;max-width:320px">
+                        Scannen Sie diesen Code mit der Smartphone-Kamera, um die Datei direkt auf Ihrem Mobilgerät zu öffnen.
+                    </p>
+                    <div class="form-row" style="max-width:360px;margin:0 auto">
+                        <input type="text" class="input small" value="${esc(url)}" readonly onclick="this.select()" style="text-align:center">
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-qr-copy">Kopieren</button>
+                    </div>
+                </div>
+            `);
+            $('#btn-qr-copy')?.addEventListener('click', () => {
+                navigator.clipboard?.writeText(url);
+                toast('Link kopiert!');
+            });
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    }
+
+    // Floating Audio Dock Player
+    function playDockAudio(file) {
+        let dock = $('#audio-dock');
+        if (!dock) {
+            dock = document.createElement('div');
+            dock.id = 'audio-dock';
+            dock.className = 'audio-dock-player';
+            document.body.appendChild(dock);
+        }
+        const streamUrl = `api.php?action=download&id=${file.id}&inline=1`;
+        dock.innerHTML = `
+            <div class="audio-dock-inner">
+                <div class="audio-dock-header">
+                    <div class="audio-dock-title" title="${esc(file.name)}">
+                        <span>🎵</span>
+                        <span>${esc(file.name)}</span>
+                    </div>
+                    <button type="button" class="audio-dock-close" id="btn-audio-dock-close" title="Schließen">✕</button>
+                </div>
+                <audio id="audio-dock-element" controls autoplay src="${streamUrl}"></audio>
+            </div>
+        `;
+        dock.classList.remove('hidden');
+        $('#btn-audio-dock-close', dock)?.addEventListener('click', () => {
+            const a = $('#audio-dock-element', dock);
+            if (a) a.pause();
+            dock.classList.add('hidden');
+        });
+    }
 
     // Auth & Boot
     let active2faMethod = 'totp';
@@ -1517,7 +1748,7 @@
                                     <div id="th-filter-menu" class="th-filter-menu ${state.filterMenuOpen ? '' : 'hidden'}">${filterMenuHtml}</div>
                                 </div>
                             </th>
-                            <th class="th-col-tag" style="width:85px">
+                            <th class="th-col-tag" style="width:48px;text-align:center">
                                 <span class="th-sort-btn ${state.sortBy === 'tag' ? 'active' : ''}" data-sort-col="tag" title="Nach Farb-Tag sortieren">
                                     Tag ${arrow('tag')}
                                 </span>
@@ -1594,13 +1825,8 @@
                             </div>
                         </div>
                     </td>
-                    <td class="cell-tag">
-                        ${item.color_tag ? `
-                            <span class="color-tag-pill color-${esc(item.color_tag)}" title="Tag: ${esc(colorTagNames[item.color_tag] || item.color_tag)}">
-                                <span class="color-tag-dot color-${esc(item.color_tag)}"></span>
-                                <span class="tag-label">${esc(colorTagNames[item.color_tag] || item.color_tag)}</span>
-                            </span>
-                        ` : ''}
+                    <td class="cell-tag" style="text-align:center">
+                        ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(colorTagNames[item.color_tag] || item.color_tag)}"></span>` : ''}
                     </td>
                     <td class="muted" style="white-space:nowrap">${isFolder ? '—' : formatBytes(item.size_bytes)}</td>
                     <td class="muted small hide-mobile">${esc((item.updated_at || '').replace('T', ' ').slice(0, 16))}</td>
@@ -1925,13 +2151,27 @@
             }
             itemsHtml += `
                 <button type="button" class="dropdown-item" data-ctx-act="download">
-                    ${isFolder ? '📦 Als ZIP herunterladen' : '⬇️ Herunterladen'}
+                    ${targetItems.length > 1 ? `📦 Als ZIP herunterladen (${targetItems.length})` : (isFolder ? '📦 Als ZIP herunterladen' : '⬇️ Herunterladen')}
                 </button>
             `;
             if (!isFolder && item.category === 'zip' && !item.is_encrypted) {
                 itemsHtml += `
                     <button type="button" class="dropdown-item" data-ctx-act="unzip">
                         📂 ZIP hier entpacken
+                    </button>
+                `;
+            }
+            if (!isFolder && item.category === 'pdf' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="rotate_pdf">
+                        🔄 Seiten um 90° drehen
+                    </button>
+                `;
+            }
+            if (!isFolder && item.category === 'audio') {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="play_audio">
+                        🎵 Im Hintergrund abspielen
                     </button>
                 `;
             }
@@ -2475,6 +2715,9 @@
         $('#bulk-count').textContent = `${count} ausgewählt`;
 
         const isTrash = state.view === 'trash';
+        const selectedList = Array.from(state.selected.values());
+        const allPdfs = selectedList.length >= 2 && selectedList.every((it) => it.type === 'file' && (it.mime_type === 'application/pdf' || it.name.toLowerCase().endsWith('.pdf')));
+        $('#btn-bulk-merge-pdf')?.classList.toggle('hidden', isTrash || !allPdfs);
         $('#btn-bulk-copy')?.classList.toggle('hidden', isTrash);
         $('#btn-bulk-cut')?.classList.toggle('hidden', isTrash);
         $('#btn-bulk-download').classList.toggle('hidden', isTrash);
@@ -2483,17 +2726,56 @@
         $('#btn-bulk-purge').classList.toggle('hidden', !isTrash);
     }
 
+    $('#btn-bulk-merge-pdf')?.addEventListener('click', async () => {
+        const items = Array.from(state.selected.values()).filter((it) => it.type === 'file');
+        if (items.length < 2) return;
+        const defaultName = items[0].name.replace(/\.pdf$/i, '') + '_zusammengefuehrt.pdf';
+        const name = prompt('Name für die zusammengeführte PDF-Datei:', defaultName);
+        if (!name) return;
+
+        try {
+            toast('Führe PDFs zusammen…');
+            const res = await apiPost('pdf_merge', {
+                file_ids: items.map((it) => it.id),
+                name: name.trim(),
+                target_folder_id: state.currentFolderId,
+            });
+            toast(`PDF „${res.file.name}“ erfolgreich erstellt!`);
+            state.selected.clear();
+            updateBulkToolbar();
+            loadCurrentView();
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
     // Individual Row Actions
     async function handleItemAction(act, item) {
         switch (act) {
             case 'download':
-                if (item.type === 'folder') {
-                    triggerZipDownload([item]);
+                const targetKey = `${item.type}:${item.id}`;
+                const targetItems = state.selected.has(targetKey) ? Array.from(state.selected.values()) : [item];
+                if (targetItems.length > 1 || item.type === 'folder') {
+                    triggerZipDownload(targetItems);
                 } else if (item.is_encrypted) {
                     openVaultModal(item);
                 } else {
                     window.location.href = `api.php?action=download&id=${item.id}`;
                 }
+                break;
+
+            case 'rotate_pdf':
+                try {
+                    await apiPost('pdf_rotate', { file_id: item.id, angle: 90 });
+                    toast('PDF-Seiten erfolgreich um 90° gedreht.');
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+                break;
+
+            case 'play_audio':
+                playDockAudio(item);
                 break;
 
             case 'rename':
@@ -2996,6 +3278,11 @@
             return;
         }
 
+        if (file.category === 'audio') {
+            playDockAudio(file);
+            return;
+        }
+
         const streamUrl = `api.php?action=download&id=${file.id}&inline=1`;
         const dlUrl = `api.php?action=download&id=${file.id}`;
         let previewHtml = '';
@@ -3004,8 +3291,6 @@
             previewHtml = `<div class="preview-media-wrap"><img src="${streamUrl}" alt="${esc(file.name)}"></div>`;
         } else if (file.category === 'video') {
             previewHtml = `<div class="preview-media-wrap"><video controls autoplay src="${streamUrl}"></video></div>`;
-        } else if (file.category === 'audio') {
-            previewHtml = `<div class="preview-media-wrap" style="padding:2rem"><audio controls autoplay src="${streamUrl}" style="width:100%"></audio></div>`;
         } else if (file.category === 'pdf') {
             previewHtml = `<iframe class="preview-pdf-frame" src="${streamUrl}"></iframe>`;
         } else {
@@ -3308,6 +3593,7 @@
                     <div class="form-row">
                         <input type="text" class="input small" value="${esc(shareUrl)}" readonly onclick="this.select()">
                         <button type="button" class="btn btn-primary btn-sm" data-copy="${esc(shareUrl)}">Kopieren</button>
+                        <button type="button" class="btn btn-ghost btn-sm" data-qr="${esc(shareUrl)}">📱 QR-Code</button>
                     </div>
                 </div>
             `;
@@ -3433,6 +3719,12 @@
             });
         });
 
+        $$('[data-qr]', body).forEach((btn) => {
+            btn.addEventListener('click', () => {
+                showQrModal(btn.dataset.qr);
+            });
+        });
+
         $$('[data-del-pub]', body).forEach((btn) => {
             btn.addEventListener('click', async () => {
                 await apiPost('delete_public_share', { share_id: Number(btn.dataset.delPub) });
@@ -3537,8 +3829,9 @@
                         <td>${ps.item_type === 'folder' ? '📁' : '📄'} <strong>${esc(ps.item_name)}</strong></td>
                         <td>${ps.mode === 'upload' ? '📤 File-Drop' : ps.mode === 'readwrite' ? '🔄 Lesen & Upload' : '⬇️ Download'}${ps.has_password ? ' · 🔒' : ''}</td>
                         <td class="muted small">${ps.expires_at ? esc(ps.expires_at) : 'Unbegrenzt'} (${ps.download_count} Abrufe)</td>
-                        <td style="text-align:right">
-                            <button type="button" class="btn btn-ghost btn-sm" data-copy-link="${esc(url)}">📋 Link kopieren</button>
+                        <td style="text-align:right;white-space:nowrap">
+                            <button type="button" class="btn btn-ghost btn-sm" data-copy-link="${esc(url)}">📋 Link</button>
+                            <button type="button" class="btn btn-ghost btn-sm" data-qr-link="${esc(url)}">📱 QR</button>
                             <button type="button" class="btn btn-danger btn-sm" data-revoke-pub="${ps.id}">Löschen</button>
                         </td>
                     </tr>
@@ -3589,6 +3882,11 @@
                 btn.addEventListener('click', () => {
                     navigator.clipboard?.writeText(btn.dataset.copyLink);
                     toast('Link kopiert!');
+                });
+            });
+            $$('[data-qr-link]', container).forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    showQrModal(btn.dataset.qrLink);
                 });
             });
             $$('[data-revoke-pub]', container).forEach((btn) => {
@@ -4746,8 +5044,23 @@
                                 <input type="text" name="github_branch" class="input" value="${esc(settings.github_branch || 'main')}">
                             </div>
                         </div>
+                        <div class="form-group" style="margin-bottom:0.85rem">
+                            <label class="small muted">Automatische Papierkorb-Leerung (Tage, 0 = nie)</label>
+                            <input type="number" name="trash_auto_purge_days" class="input" value="${esc(settings.trash_auto_purge_days ?? '30')}" min="0">
+                            <div class="small muted" style="margin-top:0.25rem">Dateien im Papierkorb, die älter als diese Anzahl an Tagen sind, werden automatisch endgültig gelöscht.</div>
+                        </div>
                         <button type="submit" class="btn btn-primary">Einstellungen speichern</button>
                     </form>
+
+                    <div style="border:1px solid var(--border);border-radius:10px;padding:0.85rem;background:var(--bg);margin-top:1.25rem">
+                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem">
+                            <div>
+                                <h4 style="margin:0 0 0.2rem">🧹 Speicher-Optimierer (Duplikate-Finder)</h4>
+                                <div class="small muted">Findet mehrfach hochgeladene, identische Dateien und gibt Speicherplatz frei.</div>
+                            </div>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-adm-find-duplicates">🔍 Duplikate suchen</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="adm-update" class="${activeTab === 'adm-update' ? '' : 'hidden'}">
@@ -5067,11 +5380,22 @@
                         enable_webdav: fd.get('enable_webdav') === '1',
                         github_repo: fd.get('github_repo'),
                         github_branch: fd.get('github_branch'),
+                        trash_auto_purge_days: Number(fd.get('trash_auto_purge_days') || 0),
                     });
                     state.appName = sRes.settings.app_name;
                     $('#app-title-text').textContent = state.appName;
                     document.title = state.appName;
                     toast('Einstellungen gespeichert.');
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+
+            $('#btn-adm-find-duplicates', body)?.addEventListener('click', async () => {
+                try {
+                    toast('Analysiere Speicher auf Duplikate…');
+                    const res = await apiGet({ action: 'admin_find_duplicates' });
+                    openDuplicatesModal(res.data);
                 } catch (err) {
                     toast(err.message, 'error');
                 }
@@ -5100,6 +5424,73 @@
         } catch (err) {
             toast(err.message, 'error');
         }
+    }
+
+    function openDuplicatesModal(data) {
+        const groups = data.groups || [];
+        const totalWasted = data.total_wasted_bytes || 0;
+
+        if (groups.length === 0) {
+            openModal('🧹 Speicher-Optimierer', `
+                <div class="empty-state" style="padding:2rem 0">
+                    <div class="empty-state-icon">🎉</div>
+                    <h3>Keine Duplikate gefunden</h3>
+                    <p class="muted">Alle gespeicherten Dateien sind einzigartig. Es wird kein Speicherplatz durch doppelte Dateien verschwendet!</p>
+                </div>
+            `);
+            return;
+        }
+
+        const groupsHtml = groups.map((g) => {
+            const filesHtml = (g.files || []).map((f, fIdx) => `
+                <div class="dup-item-row">
+                    <div>
+                        <strong>📄 ${esc(f.name)}</strong>
+                        <div class="muted small">in 📁 ${esc(f.folder_name || 'Hauptverzeichnis')} · ${esc(f.owner_name)} · ${esc((f.created_at || '').slice(0, 16))}</div>
+                    </div>
+                    ${fIdx === 0 ? '<span class="badge" style="background:var(--bg-secondary)">Original behalten</span>' : `
+                        <button type="button" class="btn btn-danger btn-sm" data-del-dup="${f.id}" data-dup-name="${esc(f.name)}">🗑️ Löschen</button>
+                    `}
+                </div>
+            `).join('');
+
+            return `
+                <div class="dup-group-box">
+                    <div class="dup-group-header">
+                        <span>Datei (${formatBytes(g.size_bytes)}) · ${g.count} Kopien</span>
+                        <span class="muted small">${formatBytes(g.wasted_bytes)} verschwendet</span>
+                    </div>
+                    ${filesHtml}
+                </div>
+            `;
+        }).join('');
+
+        openModal(`🧹 ${groups.length} Duplikat-Gruppe(n) – ${formatBytes(totalWasted)} freigebbar`, `
+            <p class="muted small" style="margin-top:0">
+                Die folgenden Dateien haben exakt denselben SHA-256-Fingerabdruck. Sie können überflüssige Kopien sicher löschen:
+            </p>
+            <div style="max-height:460px;overflow-y:auto;padding-right:0.25rem">
+                ${groupsHtml}
+            </div>
+        `, true);
+
+        const mBody = $('#modal-body');
+        $$('[data-del-dup]', mBody).forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const fId = Number(btn.dataset.delDup);
+                const fName = btn.dataset.dupName;
+                if (!confirm(`„${fName}“ wirklich löschen?`)) return;
+                try {
+                    await apiPost('trash', { items: [{ type: 'file', id: fId, name: fName }] });
+                    toast(`„${fName}“ gelöscht.`);
+                    const fresh = await apiGet({ action: 'admin_find_duplicates' });
+                    openDuplicatesModal(fresh.data);
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+        });
     }
 
     function openEditUserModal(u) {

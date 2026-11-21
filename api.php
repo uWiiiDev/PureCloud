@@ -15,6 +15,14 @@ use Cloud\UserManager;
 Auth::startSession();
 Auth::sendSecurityHeaders();
 
+if (!isset($_SESSION['last_auto_purge']) || (time() - (int)$_SESSION['last_auto_purge'] > 3600)) {
+    $_SESSION['last_auto_purge'] = time();
+    $purgeDays = (int)(Database::getSetting('trash_auto_purge_days') ?? 30);
+    if ($purgeDays > 0) {
+        FileManager::autoPurgeTrash($purgeDays);
+    }
+}
+
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $input  = [];
 if ($method === 'POST') {
@@ -765,7 +773,56 @@ try {
             if (isset($input['github_branch']) && trim((string)$input['github_branch']) !== '') {
                 Database::setSetting('github_branch', trim((string)$input['github_branch']));
             }
+            if (isset($input['trash_auto_purge_days'])) {
+                Database::setSetting('trash_auto_purge_days', (string)max(0, (int)$input['trash_auto_purge_days']));
+            }
             jsonResponse(['ok' => true, 'settings' => Database::getSettings()]);
+
+        case 'quick_search':
+            $q = trim((string)($input['q'] ?? $_GET['q'] ?? ''));
+            jsonResponse([
+                'ok'   => true,
+                'data' => FileManager::quickSearch($userId, $q),
+            ]);
+
+        case 'share_qr':
+            $url = trim((string)($input['url'] ?? $_GET['url'] ?? ''));
+            if ($url === '') {
+                throw new RuntimeException('Keine URL übergeben.');
+            }
+            $svg = TwoFactor::renderQrCodeSvg($url, 220);
+            jsonResponse([
+                'ok'     => true,
+                'url'    => $url,
+                'qr_svg' => $svg,
+            ]);
+
+        case 'admin_find_duplicates':
+            if ($user['role'] !== 'admin') {
+                throw new RuntimeException('Nur für Administratoren.');
+            }
+            jsonResponse([
+                'ok'   => true,
+                'data' => FileManager::findDuplicates($userId, true),
+            ]);
+
+        case 'pdf_merge':
+            $fileIds = $input['file_ids'] ?? [];
+            if (!is_array($fileIds) || count($fileIds) < 2) {
+                throw new RuntimeException('Bitte mindestens 2 PDF-Dateien auswählen.');
+            }
+            $targetFolderId = isset($input['target_folder_id']) && $input['target_folder_id'] !== ''
+                ? (int)$input['target_folder_id']
+                : null;
+            $targetName = (string)($input['name'] ?? '');
+            $res = FileManager::mergePdfs($userId, $fileIds, $targetFolderId, $targetName);
+            jsonResponse(['ok' => true, 'file' => $res]);
+
+        case 'pdf_rotate':
+            $fileId = (int)($input['file_id'] ?? 0);
+            $angle  = (int)($input['angle'] ?? 90);
+            $res    = FileManager::rotatePdf($userId, $fileId, $angle);
+            jsonResponse(['ok' => true, 'result' => $res]);
 
         case 'admin_check_update':
             if ($user['role'] !== 'admin') {

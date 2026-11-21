@@ -2198,4 +2198,315 @@ class FileManager
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
+
+    public static function quickSearch(int $userId, string $query): array
+    {
+        $q = trim($query);
+        if ($q === '') {
+            return ['folders' => [], 'files' => []];
+        }
+
+        $pdo = Database::get();
+        $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+
+        $fStmt = $pdo->prepare("
+            SELECT id, name, parent_id, color_tag, notes, updated_at
+            FROM folders
+            WHERE owner_id = :uid AND deleted_at IS NULL AND (name LIKE :q ESCAPE '\\' OR notes LIKE :q ESCAPE '\\')
+            ORDER BY name COLLATE NOCASE ASC
+            LIMIT 8
+        ");
+        $fStmt->execute([':uid' => $userId, ':q' => $like]);
+        $folders = [];
+        foreach ($fStmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
+            $f['path'] = self::getFolderPathString($userId, (int)$f['id']);
+            $folders[] = $f;
+        }
+
+        $fileStmt = $pdo->prepare("
+            SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes, updated_at
+            FROM files
+            WHERE owner_id = :uid AND deleted_at IS NULL AND (name LIKE :q ESCAPE '\\' OR notes LIKE :q ESCAPE '\\' OR color_tag = :exactQ)
+            ORDER BY name COLLATE NOCASE ASC
+            LIMIT 20
+        ");
+        $fileStmt->execute([':uid' => $userId, ':q' => $like, ':exactQ' => strtolower($q)]);
+        $files = [];
+        foreach ($fileStmt->fetchAll(PDO::FETCH_ASSOC) as $fl) {
+            $fl['category'] = self::detectCategory($fl['mime_type'], $fl['name']);
+            $fl['folder_name'] = $fl['folder_id'] ? self::getFolderPathString($userId, (int)$fl['folder_id']) : '📁 Dateien (Hauptverzeichnis)';
+            $files[] = $fl;
+        }
+
+        return [
+            'folders' => $folders,
+            'files'   => $files,
+        ];
+    }
+
+    private static function getFolderPathString(int $userId, int $folderId): string
+    {
+        $parts = [];
+        $currId = $folderId;
+        $pdo = Database::get();
+        $visited = [];
+
+        while ($currId !== null && !isset($visited[$currId])) {
+            $visited[$currId] = true;
+            $stmt = $pdo->prepare('SELECT id, name, parent_id FROM folders WHERE id = :id AND deleted_at IS NULL');
+            $stmt->execute([':id' => $currId]);
+            $f = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$f) {
+                break;
+            }
+            array_unshift($parts, $f['name']);
+            $currId = $f['parent_id'] !== null ? (int)$f['parent_id'] : null;
+        }
+
+        return empty($parts) ? '📁' : implode(' / ', $parts);
+    }
+
+    public static function findDuplicates(int $userId, bool $isAdmin = false): array
+    {
+        $pdo = Database::get();
+        $userFilter = $isAdmin ? '' : 'AND f.owner_id = ' . (int)$userId;
+
+        $groupsStmt = $pdo->query("
+            SELECT f.sha256, COUNT(*) as count, f.size_bytes, (f.size_bytes * (COUNT(*) - 1)) as wasted_bytes
+            FROM files f
+            WHERE f.deleted_at IS NULL AND f.is_encrypted = 0 AND f.sha256 IS NOT NULL AND f.sha256 != '' $userFilter
+            GROUP BY f.sha256
+            HAVING count > 1
+            ORDER BY wasted_bytes DESC
+            LIMIT 50
+        ");
+        $groups = $groupsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $totalWasted = 0;
+        $result = [];
+
+        foreach ($groups as $g) {
+            $totalWasted += (int)$g['wasted_bytes'];
+            $fileStmt = $pdo->prepare("
+                SELECT f.id, f.name, f.size_bytes, f.folder_id, f.owner_id, f.created_at, f.updated_at,
+                       u.display_name as owner_name,
+                       (SELECT name FROM folders fo WHERE fo.id = f.folder_id) as folder_name
+                FROM files f
+                JOIN users u ON u.id = f.owner_id
+                WHERE f.sha256 = :sha AND f.deleted_at IS NULL $userFilter
+                ORDER BY f.id ASC
+            ");
+            $fileStmt->execute([':sha' => $g['sha256']]);
+            $files = $fileStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $result[] = [
+                'sha256'       => $g['sha256'],
+                'count'        => (int)$g['count'],
+                'size_bytes'   => (int)$g['size_bytes'],
+                'wasted_bytes' => (int)$g['wasted_bytes'],
+                'files'        => $files,
+            ];
+        }
+
+        return [
+            'total_wasted_bytes' => $totalWasted,
+            'groups'             => $result,
+        ];
+    }
+
+    public static function mergePdfs(int $userId, array $fileIds, ?int $targetFolderId, string $targetName = ''): array
+    {
+        if (count($fileIds) < 2) {
+            throw new RuntimeException('Bitte mindestens 2 PDF-Dateien zum Zusammenführen auswählen.');
+        }
+
+        $pdo = Database::get();
+        $inputPaths = [];
+        $firstAccess = null;
+
+        foreach ($fileIds as $fid) {
+            $access = self::resolveFileAccess($userId, (int)$fid);
+            if (!$access || $access['file']['deleted_at'] !== null) {
+                throw new RuntimeException("Keine Berechtigung für Datei ID {$fid}.");
+            }
+            if ($access['file']['category'] !== 'pdf') {
+                throw new RuntimeException("„{$access['file']['name']}“ ist keine PDF-Datei.");
+            }
+            $p = Database::FILES_DIR . '/' . $access['file']['storage_name'];
+            if (!is_file($p)) {
+                throw new RuntimeException("Datei „{$access['file']['name']}“ nicht auf Festplatte gefunden.");
+            }
+            $inputPaths[] = $p;
+            if (!$firstAccess) {
+                $firstAccess = $access;
+            }
+        }
+
+        $accessWrite = self::canWriteFolder($userId, $targetFolderId);
+        $ownerId = $accessWrite['effective_owner_id'];
+
+        $cleanName = trim($targetName);
+        if ($cleanName === '') {
+            $baseName = pathinfo($firstAccess['file']['name'], PATHINFO_FILENAME);
+            $cleanName = $baseName . '_zusammengefuehrt.pdf';
+        }
+        if (!str_ends_with(strtolower($cleanName), '.pdf')) {
+            $cleanName .= '.pdf';
+        }
+        $cleanName = self::sanitizeName($cleanName);
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'pure_merge_') . '.pdf';
+
+        $hasQpdf = is_executable('/usr/bin/qpdf');
+        $hasGs = is_executable('/usr/bin/gs');
+
+        $cmd = '';
+        if ($hasQpdf) {
+            $escaped = implode(' 1-z ', array_map('escapeshellarg', $inputPaths)) . ' 1-z';
+            $cmd = '/usr/bin/qpdf --empty --pages ' . $escaped . ' -- ' . escapeshellarg($tmpOut) . ' 2>&1';
+        } elseif ($hasGs) {
+            $escaped = implode(' ', array_map('escapeshellarg', $inputPaths));
+            $cmd = '/usr/bin/gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -dAutoRotatePages=/None -sOutputFile=' . escapeshellarg($tmpOut) . ' ' . $escaped . ' 2>&1';
+        } else {
+            throw new RuntimeException('Kein PDF-Werkzeug (qpdf oder gs) auf dem Server installiert.');
+        }
+
+        exec($cmd, $output, $ret);
+        if ($ret !== 0 || !is_file($tmpOut) || filesize($tmpOut) === 0) {
+            @unlink($tmpOut);
+            throw new RuntimeException('PDF-Zusammenführung fehlgeschlagen: ' . implode("\n", $output));
+        }
+
+        $size = filesize($tmpOut);
+        $sha = hash_file('sha256', $tmpOut);
+        $storageName = bin2hex(random_bytes(16));
+        $destPath = Database::FILES_DIR . '/' . $storageName;
+
+        if (!rename($tmpOut, $destPath)) {
+            copy($tmpOut, $destPath);
+            @unlink($tmpOut);
+        }
+
+        $ins = $pdo->prepare("
+            INSERT INTO files (owner_id, folder_id, name, storage_name, mime_type, size_bytes, sha256, is_encrypted, created_at, updated_at)
+            VALUES (:uid, :fid, :name, :sname, 'application/pdf', :size, :sha, 0, datetime('now'), datetime('now'))
+        ");
+        $ins->execute([
+            ':uid'   => $ownerId,
+            ':fid'   => $targetFolderId,
+            ':name'  => $cleanName,
+            ':sname' => $storageName,
+            ':size'  => $size,
+            ':sha'   => $sha,
+        ]);
+
+        return [
+            'id'         => (int)$pdo->lastInsertId(),
+            'name'       => $cleanName,
+            'size_bytes' => $size,
+        ];
+    }
+
+    public static function rotatePdf(int $userId, int $fileId, int $angle = 90): array
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+            throw new RuntimeException('Keine Schreibberechtigung für diese Datei.');
+        }
+        if ($access['file']['category'] !== 'pdf') {
+            throw new RuntimeException('Nur PDF-Dateien können gedreht werden.');
+        }
+
+        $srcPath = Database::FILES_DIR . '/' . $access['file']['storage_name'];
+        if (!is_file($srcPath)) {
+            throw new RuntimeException('Quelldatei nicht gefunden.');
+        }
+
+        $validAngles = [90, 180, 270];
+        if (!in_array($angle, $validAngles, true)) {
+            $angle = 90;
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'pure_rot_') . '.pdf';
+        $hasQpdf = is_executable('/usr/bin/qpdf');
+        $hasGs = is_executable('/usr/bin/gs');
+
+        if ($hasQpdf) {
+            $cmd = '/usr/bin/qpdf ' . escapeshellarg($srcPath) . ' --rotate=+' . $angle . ' -- ' . escapeshellarg($tmpOut) . ' 2>&1';
+        } elseif ($hasGs) {
+            $pageDeviceAngle = ($angle === 90 ? '1' : ($angle === 180 ? '2' : '3'));
+            $cmd = '/usr/bin/gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -dAutoRotatePages=/None -c "<</Orientation ' . $pageDeviceAngle . '>> setpagedevice" -f ' . escapeshellarg($srcPath) . ' -sOutputFile=' . escapeshellarg($tmpOut) . ' 2>&1';
+        } else {
+            throw new RuntimeException('Kein PDF-Werkzeug auf dem Server gefunden.');
+        }
+
+        exec($cmd, $output, $ret);
+        if ($ret !== 0 || !is_file($tmpOut) || filesize($tmpOut) === 0) {
+            @unlink($tmpOut);
+            throw new RuntimeException('Drehen fehlgeschlagen: ' . implode("\n", $output));
+        }
+
+        $pdo = Database::get();
+        self::archiveFileVersion($pdo, $access['file']);
+
+        $size = filesize($tmpOut);
+        $sha = hash_file('sha256', $tmpOut);
+        $newStorageName = bin2hex(random_bytes(16));
+        $destPath = Database::FILES_DIR . '/' . $newStorageName;
+
+        rename($tmpOut, $destPath);
+        self::unlinkPhysicalFile($access['file']['storage_name']);
+        self::purgeThumbnail($access['file']['storage_name']);
+
+        $upd = $pdo->prepare("
+            UPDATE files
+            SET storage_name = :sname, size_bytes = :size, sha256 = :sha, updated_at = datetime('now')
+            WHERE id = :id
+        ");
+        $upd->execute([
+            ':sname' => $newStorageName,
+            ':size'  => $size,
+            ':sha'   => $sha,
+            ':id'    => $fileId,
+        ]);
+
+        return [
+            'ok'         => true,
+            'id'         => $fileId,
+            'size_bytes' => $size,
+        ];
+    }
+
+    public static function autoPurgeTrash(int $days = 30): int
+    {
+        if ($days <= 0) {
+            return 0;
+        }
+        $pdo = Database::get();
+        $cutoff = date('Y-m-d H:i:s', strtotime("-{$days} days"));
+
+        $stmt = $pdo->prepare('SELECT id, storage_name FROM files WHERE deleted_at IS NOT NULL AND deleted_at < :cut');
+        $stmt->execute([':cut' => $cutoff]);
+        $count = 0;
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fl) {
+            $fId = (int)$fl['id'];
+            self::purgeFileVersions($pdo, $fId);
+            self::unlinkPhysicalFile($fl['storage_name']);
+            self::purgeThumbnail($fl['storage_name']);
+            $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare("DELETE FROM group_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare('DELETE FROM files WHERE id = :id')->execute([':id' => $fId]);
+            $count++;
+        }
+
+        $fStmt = $pdo->prepare('SELECT id FROM folders WHERE deleted_at IS NOT NULL AND deleted_at < :cut');
+        $fStmt->execute([':cut' => $cutoff]);
+        foreach ($fStmt->fetchAll(PDO::FETCH_COLUMN) as $folderId) {
+            self::purgeFolderTree($pdo, (int)$folderId);
+            $count++;
+        }
+
+        return $count;
+    }
 }

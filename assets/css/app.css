@@ -454,6 +454,22 @@ html[data-theme="light"] .alert-success {
     border-color: var(--primary);
 }
 
+.search-kbd {
+    position: absolute;
+    right: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: inherit;
+    pointer-events: none;
+    line-height: 1;
+}
+
 .top-actions {
     display: flex;
     gap: 0.45rem;
@@ -1380,14 +1396,6 @@ html[data-theme="light"] .alert-success {
         padding-left: 0.2rem !important;
         padding-right: 0.2rem !important;
     }
-    .color-tag-pill {
-        padding: 0 !important;
-        background: transparent !important;
-        border: none !important;
-    }
-    .color-tag-pill .tag-label {
-        display: none;
-    }
 
     .file-viewport {
         padding: 0.75rem 0.75rem 2.5rem;
@@ -1454,24 +1462,15 @@ html[data-theme="light"] .alert-success {
 .color-tag-dot.color-blue { background: #3b82f6; }
 .color-tag-dot.color-purple { background: #a855f7; }
 
-.color-tag-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.76rem;
-    font-weight: 500;
-    padding: 0.15rem 0.45rem;
-    border-radius: 12px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    color: var(--text);
-    white-space: nowrap;
-}
-.color-tag-pill .color-tag-dot {
-    margin-right: 0;
-}
 .cell-tag {
+    width: 48px;
+    text-align: center;
     white-space: nowrap;
+}
+.cell-tag .color-tag-dot {
+    margin: 0 auto;
+    width: 9px;
+    height: 9px;
 }
 
 .color-picker-bar {
@@ -1557,4 +1556,194 @@ html[data-theme="light"] .alert-success {
 .version-list-item.is-current {
     border-color: var(--primary);
     background: var(--bg-active);
+}
+
+/* Spotlight Quick Search (Strg+K) */
+.spotlight-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(4px);
+    z-index: 1200;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 12vh;
+    animation: fadeIn 0.12s ease-out;
+}
+.spotlight-dialog {
+    width: 100%;
+    max-width: 580px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.spotlight-input-wrap {
+    display: flex;
+    align-items: center;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border);
+    gap: 0.65rem;
+}
+.spotlight-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 1.05rem;
+    color: var(--text);
+    outline: none;
+}
+.spotlight-results {
+    max-height: 380px;
+    overflow-y: auto;
+    padding: 0.4rem 0.4rem;
+}
+.spotlight-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+    text-decoration: none;
+    color: inherit;
+}
+.spotlight-item:hover, .spotlight-item.active {
+    background: var(--primary-light, rgba(37, 99, 235, 0.1));
+}
+.spotlight-item-icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+.spotlight-item-text {
+    flex: 1;
+    min-width: 0;
+}
+.spotlight-item-name {
+    font-weight: 500;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.spotlight-item-sub {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.spotlight-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.9rem;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Floating Audio Dock Player */
+.audio-dock-player {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 1050;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+    padding: 0.65rem 0.85rem;
+    min-width: 320px;
+    max-width: 440px;
+    animation: slideUp 0.18s ease-out;
+}
+.audio-dock-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.audio-dock-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+.audio-dock-title {
+    font-size: 0.86rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text);
+}
+.audio-dock-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+}
+.audio-dock-close:hover {
+    color: var(--text);
+    background: var(--bg-secondary);
+}
+.audio-dock-player audio {
+    width: 100%;
+    height: 36px;
+    outline: none;
+}
+@media (max-width: 640px) {
+    .audio-dock-player {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-width: none;
+        border-radius: 12px 12px 0 0;
+        border-bottom: none;
+    }
+}
+
+/* Duplicate Finder */
+.dup-group-box {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 0.85rem;
+    background: var(--bg);
+    overflow: hidden;
+}
+.dup-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.55rem 0.85rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.84rem;
+    font-weight: 600;
+}
+.dup-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.45rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.84rem;
+}
+.dup-item-row:last-child {
+    border-bottom: none;
 }
