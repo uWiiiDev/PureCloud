@@ -8,6 +8,7 @@ use Cloud\Auth;
 use Cloud\CryptoVault;
 use Cloud\Database;
 use Cloud\FileManager;
+use Cloud\SelfTest;
 use Cloud\ShareManager;
 use Cloud\TwoFactor;
 use Cloud\UserManager;
@@ -954,6 +955,12 @@ try {
             }
             $result = AppUpdater::performUpdate();
             jsonResponse(['ok' => true, 'result' => $result]);
+
+        case 'admin_selftest':
+            if ($user['role'] !== 'admin') {
+                throw new RuntimeException('Nur für Administratoren.');
+            }
+            jsonResponse(['ok' => true, 'report' => SelfTest::runAll($userId)]);
 
         default:
             jsonResponse(['ok' => false, 'error' => 'Unbekannte Aktion: ' . $action], 400);

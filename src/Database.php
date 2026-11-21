@@ -22,6 +22,11 @@ class Database
                 mkdir($dir, 0750, true);
             }
         }
+
+        $htaccess = self::STORAGE_DIR . '/.htaccess';
+        if (!file_exists($htaccess)) {
+            @file_put_contents($htaccess, "# PureCloud Storage Access Protection\nRequire all denied\n<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
+        }
     }
 
     public static function get(): PDO

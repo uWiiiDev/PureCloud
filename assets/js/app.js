@@ -8632,6 +8632,7 @@
                     <button type="button" class="tab-btn ${activeTab === 'adm-group-folders' ? 'active' : ''}" data-adm-tab="adm-group-folders">📂 Gruppenordner (${groupFolders.length})</button>
                     <button type="button" class="tab-btn ${activeTab === 'adm-settings' ? 'active' : ''}" data-adm-tab="adm-settings">🛠️ System</button>
                     <button type="button" class="tab-btn ${activeTab === 'adm-update' ? 'active' : ''}" data-adm-tab="adm-update">🚀 GitHub Update</button>
+                    <button type="button" class="tab-btn ${activeTab === 'adm-diagnostics' ? 'active' : ''}" data-adm-tab="adm-diagnostics">🩺 Selbsttest</button>
                 </div>
 
                 <div id="adm-users" class="${activeTab === 'adm-users' ? '' : 'hidden'}">
@@ -8819,19 +8820,50 @@
 
                     <div id="adm-update-log-box" class="hidden" style="margin-top:1rem;padding:0.75rem;border-radius:8px;background:#1e1e1e;color:#d4d4d4;font-family:monospace;font-size:0.8rem;white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
                 </div>
+
+                <div id="adm-diagnostics" class="${activeTab === 'adm-diagnostics' ? '' : 'hidden'}">
+                    <div style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg);margin-bottom:1rem">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.75rem">
+                            <div>
+                                <h4 style="margin:0 0 0.25rem;display:flex;align-items:center;gap:0.5rem">
+                                    <span>🩺 System-Selbsttest & Integritätsprüfung</span>
+                                    <span id="adm-selftest-badge" class="badge" style="font-size:0.75rem;padding:0.2rem 0.55rem;background:var(--bg-secondary);border:1px solid var(--border)">Bereit</span>
+                                </h4>
+                                <div class="small muted">
+                                    Vollständige Prüfung von PHP-Umgebung, Dateisystem, SQLite-Integrität, AES-256-GCM Tresorverschlüsselung, ZIP-Engine und Bildverarbeitung.
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:0.5rem;align-items:center">
+                                <button type="button" class="btn btn-primary btn-sm" id="btn-adm-run-selftest">
+                                    ▶️ Selbsttest ausführen
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="adm-selftest-results" style="margin-top:1rem">
+                            <p class="muted small" style="margin:0.5rem 0">Klicken Sie auf „Selbsttest ausführen“, um alle Systemkomponenten zu testen.</p>
+                        </div>
+                    </div>
+                </div>
             `, true);
 
             const body = $('#modal-body');
             let updateLoaded = false;
+            let diagnosticsLoaded = false;
+            let isDiagnosticsRunning = false;
+
             $$('[data-adm-tab]', body).forEach((btn) => {
                 btn.addEventListener('click', () => {
                     $$('[data-adm-tab]', body).forEach((b) => b.classList.remove('active'));
                     btn.classList.add('active');
-                    ['adm-users', 'adm-groups', 'adm-group-folders', 'adm-settings', 'adm-update'].forEach((id) => {
+                    ['adm-users', 'adm-groups', 'adm-group-folders', 'adm-settings', 'adm-update', 'adm-diagnostics'].forEach((id) => {
                         $(`#${id}`, body)?.classList.toggle('hidden', btn.dataset.admTab !== id);
                     });
                     if (btn.dataset.admTab === 'adm-update' && !updateLoaded) {
                         loadUpdateInfo();
+                    }
+                    if (btn.dataset.admTab === 'adm-diagnostics' && !diagnosticsLoaded) {
+                        runSelfTest();
                     }
                 });
             });
@@ -8956,6 +8988,150 @@
 
             if (activeTab === 'adm-update') {
                 loadUpdateInfo();
+            }
+
+            async function runSelfTest() {
+                if (isDiagnosticsRunning) return;
+                const badge = $('#adm-selftest-badge', body);
+                const resultsContainer = $('#adm-selftest-results', body);
+                const runBtn = $('#btn-adm-run-selftest', body);
+                if (!resultsContainer) return;
+
+                isDiagnosticsRunning = true;
+                if (runBtn) {
+                    runBtn.disabled = true;
+                    runBtn.innerHTML = '⏳ Prüfung läuft…';
+                }
+                if (badge) {
+                    badge.style.background = '#2563eb';
+                    badge.style.color = '#fff';
+                    badge.textContent = '⏳ Tests werden ausgeführt…';
+                }
+
+                resultsContainer.innerHTML = `
+                    <div style="text-align:center;padding:2.5rem 1rem">
+                        <div class="spinner" style="margin:0 auto 1rem;width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite"></div>
+                        <div style="font-weight:600">System-Selbsttest läuft…</div>
+                        <div class="small muted" style="margin-top:0.35rem">
+                            Prüfe Dateisystem-I/O, SQLite-Integrität, AES-256-GCM Tresorverschlüsselung, ZIP-Engine und Bildverarbeitung…
+                        </div>
+                    </div>
+                `;
+
+                try {
+                    const res = await apiPost('admin_selftest');
+                    const report = res.report || {};
+                    diagnosticsLoaded = true;
+
+                    const summary = report.summary || {};
+                    const overall = report.overall_status || 'pass';
+                    const healthPercent = summary.health_percent ?? 100;
+
+                    if (badge) {
+                        if (overall === 'pass') {
+                            badge.style.background = '#10b981';
+                            badge.style.color = '#fff';
+                            badge.textContent = `✅ 100% Bereit (${report.duration_ms} ms)`;
+                        } else if (overall === 'warning') {
+                            badge.style.background = '#f59e0b';
+                            badge.style.color = '#fff';
+                            badge.textContent = `⚠️ ${summary.warnings} Hinweis(e) (${report.duration_ms} ms)`;
+                        } else {
+                            badge.style.background = '#ef4444';
+                            badge.style.color = '#fff';
+                            badge.textContent = `❌ ${summary.failed} Fehler (${report.duration_ms} ms)`;
+                        }
+                    }
+
+                    // Render Summary Cards
+                    let html = `
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:0.75rem;margin-bottom:1.25rem">
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Gesamtscore</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:${healthPercent >= 90 ? '#10b981' : (healthPercent >= 75 ? '#f59e0b' : '#ef4444')}">
+                                    ${healthPercent}%
+                                </div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Erfolgreich</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:#10b981">${summary.passed || 0}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Hinweise</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:#f59e0b">${summary.warnings || 0}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Fehler</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:#ef4444">${summary.failed || 0}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Dauer</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:var(--text)">${report.duration_ms || 0} <span style="font-size:0.8rem;font-weight:400">ms</span></div>
+                            </div>
+                        </div>
+                    `;
+
+                    // Render Categories
+                    (report.categories || []).forEach((cat) => {
+                        const testsHtml = (cat.tests || []).map((t) => {
+                            const icon = t.status === 'pass' ? '✅' : (t.status === 'warning' ? '⚠️' : '❌');
+                            const badgeBg = t.status === 'pass' ? 'rgba(16,185,129,0.12)' : (t.status === 'warning' ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)');
+                            const textColor = t.status === 'pass' ? '#10b981' : (t.status === 'warning' ? '#f59e0b' : '#ef4444');
+                            return `
+                                <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:0.6rem 0.75rem;border-bottom:1px solid var(--border);gap:0.75rem;font-size:0.88rem">
+                                    <div style="display:flex;align-items:flex-start;gap:0.6rem;flex:1">
+                                        <span style="font-size:1rem;line-height:1.2">${icon}</span>
+                                        <div>
+                                            <div style="font-weight:600">${esc(t.name)}</div>
+                                            <div class="small muted" style="margin-top:0.15rem">${esc(t.message || '')}</div>
+                                        </div>
+                                    </div>
+                                    <div style="text-align:right;white-space:nowrap">
+                                        <span style="font-family:monospace;font-size:0.8rem;font-weight:600;padding:0.2rem 0.5rem;border-radius:6px;background:${badgeBg};color:${textColor}">
+                                            ${esc(t.value || (t.status === 'pass' ? 'OK' : 'Fehler'))}
+                                        </span>
+                                        <div class="small muted" style="font-size:0.72rem;margin-top:0.2rem">${t.duration_ms} ms</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+
+                        html += `
+                            <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);margin-bottom:0.85rem;overflow:hidden">
+                                <div style="padding:0.6rem 0.75rem;background:var(--bg);font-weight:700;font-size:0.92rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+                                    <span>${esc(cat.title)}</span>
+                                    <span class="small muted" style="font-weight:normal">${(cat.tests || []).length} Prüfungen</span>
+                                </div>
+                                <div>${testsHtml}</div>
+                            </div>
+                        `;
+                    });
+
+                    resultsContainer.innerHTML = html;
+                } catch (err) {
+                    if (badge) {
+                        badge.style.background = '#ef4444';
+                        badge.style.color = '#fff';
+                        badge.textContent = '❌ Fehler';
+                    }
+                    resultsContainer.innerHTML = `
+                        <div style="color:var(--danger);padding:1rem 0">
+                            <strong>Fehler bei der Testdurchführung:</strong> ${esc(err.message)}
+                        </div>
+                    `;
+                } finally {
+                    isDiagnosticsRunning = false;
+                    if (runBtn) {
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '🔄 Erneut ausführen';
+                    }
+                }
+            }
+
+            $('#btn-adm-run-selftest', body)?.addEventListener('click', () => runSelfTest());
+
+            if (activeTab === 'adm-diagnostics') {
+                runSelfTest();
             }
 
             // Group Folder create/edit/delete handlers
