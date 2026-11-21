@@ -346,9 +346,9 @@
         state.user = null;
         $('#app-shell').classList.add('hidden');
         $('#auth-screen').classList.remove('hidden');
-        $('#setup-card').classList.add('hidden');
+        $('#setup-card')?.classList.add('hidden');
         $('#twofactor-card')?.classList.add('hidden');
-        $('#login-card').classList.remove('hidden');
+        $('#login-card')?.classList.remove('hidden');
     }
 
     function enterAppShell() {
@@ -651,7 +651,7 @@
             loadCurrentView();
         });
 
-        if (['vault', 'trash', 'files'].includes(navView)) {
+        if (['vault', 'trash', 'files', 'favorites'].includes(navView)) {
             btn.addEventListener('dragover', (e) => {
                 if (e.dataTransfer.types.includes('application/x-cloud-item')) {
                     e.preventDefault();
@@ -671,6 +671,16 @@
 
                 if (navView === 'vault') {
                     openBatchVaultModal(items);
+                } else if (navView === 'favorites') {
+                    try {
+                        for (const it of items) {
+                            await apiPost('toggle_favorite', { type: it.type, id: it.id });
+                        }
+                        toast(`${items.length} Element(e) zu Favoriten hinzugefügt.`);
+                        loadCurrentView();
+                    } catch (err) {
+                        toast(err.message, 'error');
+                    }
                 } else if (navView === 'trash') {
                     try {
                         const res = await apiPost('trash', { items });
@@ -890,6 +900,7 @@
 
     function filterLabel(ft) {
         switch (ft) {
+            case 'favorite':  return '⭐ Favoriten';
             case 'folder':    return '📁 Ordner';
             case 'doc':       return '📄 Dokumente';
             case 'image':     return '🖼️ Bilder';
@@ -926,6 +937,7 @@
                 return false;
             }
             if (ft === 'all') return true;
+            if (ft === 'favorite') return Boolean(it.is_favorite);
             if (ft === 'folder') return it.type === 'folder';
             if (ft === 'encrypted') return Boolean(it.is_encrypted || it.encrypted_count > 0);
             if (ft === 'shared') return Boolean(it.share_count > 0 || it.group_name);
@@ -970,12 +982,14 @@
                 ? 'Der Papierkorb ist leer.'
                 : state.view === 'vault'
                     ? 'Keine verschlüsselten Dateien im Tresor. Sie können jede Datei über das 🔒-Symbol mit AES-256 verschlüsseln.'
-                    : state.view === 'shared'
-                        ? 'Noch keine Dateien oder Ordner für Sie freigegeben.'
-                        : 'Dieser Ordner ist leer. Ziehen Sie Dateien oder ganze Ordner per Drag & Drop hierher!';
+                    : state.view === 'favorites'
+                        ? 'Keine Favoriten vorhanden. Klicken Sie bei beliebigen Ordnern oder Dateien auf das Stern-Symbol (⭐), um sie hier schnell griffbereit zu haben.'
+                        : state.view === 'shared'
+                            ? 'Noch keine Dateien oder Ordner für Sie freigegeben.'
+                            : 'Dieser Ordner ist leer. Ziehen Sie Dateien oder ganze Ordner per Drag & Drop hierher!';
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">${state.view === 'trash' ? '🗑️' : state.view === 'vault' ? '🔒' : '📂'}</div>
+                    <div class="empty-state-icon">${state.view === 'trash' ? '🗑️' : state.view === 'vault' ? '🔒' : state.view === 'favorites' ? '⭐' : '📂'}</div>
                     <h3>Keine Einträge</h3>
                     <p class="muted">${esc(emptyMsg)}</p>
                 </div>
@@ -1292,6 +1306,7 @@
         const isFiltered = hasActiveFilter();
         const filterOpts = [
             { id: 'all',       label: '✦ Alle Typen' },
+            { id: 'favorite',  label: '⭐ Nur Favoriten' },
             { id: 'folder',    label: '📁 Nur Ordner' },
             { id: 'doc',       label: '📄 Dokumente & PDF' },
             { id: 'image',     label: '🖼️ Bilder' },
@@ -1381,14 +1396,21 @@
                         <input type="checkbox" class="row-chk" data-key="${key}" ${isSel ? 'checked' : ''}>
                     </td>
                     <td>
-                        <div class="item-cell" data-open="${key}">
-                            ${hasThumb
-                                ? `<img class="item-thumb" loading="lazy" src="api.php?action=thumb&id=${item.id}" alt="">`
-                                : `<div class="item-icon">${isFolder ? '📁' : fileIcon(item)}</div>`
-                            }
-                            <div class="item-name-wrap">
-                                <span class="item-name">${esc(item.name)}</span>
-                                ${badges}
+                        <div class="item-cell-wrap">
+                            ${!isTrash && !item.is_group_root ? `
+                                <button type="button" class="btn-fav ${item.is_favorite ? 'is-fav' : ''}" data-fav-type="${item.type}" data-fav-id="${item.id}" title="${item.is_favorite ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}">
+                                    ${item.is_favorite ? '★' : '☆'}
+                                </button>
+                            ` : ''}
+                            <div class="item-cell" data-open="${key}">
+                                ${hasThumb
+                                    ? `<img class="item-thumb" loading="lazy" src="api.php?action=thumb&id=${item.id}" alt="">`
+                                    : `<div class="item-icon">${isFolder ? '📁' : fileIcon(item)}</div>`
+                                }
+                                <div class="item-name-wrap">
+                                    <span class="item-name">${esc(item.name)}</span>
+                                    ${badges}
+                                </div>
                             </div>
                         </div>
                     </td>
@@ -1490,7 +1512,14 @@
                 <div class="grid-card ${isSel ? 'selected' : ''}" data-key="${key}" data-type="${item.type}" data-id="${item.id}" draggable="${!isTrash && !item.is_group_folder}">
                     <div class="grid-card-top">
                         <input type="checkbox" class="row-chk" data-key="${key}" ${isSel ? 'checked' : ''}>
-                        <span>${item.is_encrypted || item.encrypted_count > 0 ? '🔒' : (item.group_name ? '👪' : (item.share_count > 0 ? '🔗' : ''))}</span>
+                        <div style="display:flex;align-items:center;gap:0.35rem">
+                            ${!isTrash && !item.is_group_root ? `
+                                <button type="button" class="btn-fav ${item.is_favorite ? 'is-fav' : ''}" data-fav-type="${item.type}" data-fav-id="${item.id}" title="${item.is_favorite ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}">
+                                    ${item.is_favorite ? '★' : '☆'}
+                                </button>
+                            ` : ''}
+                            <span>${item.is_encrypted || item.encrypted_count > 0 ? '🔒' : (item.group_name ? '👪' : (item.share_count > 0 ? '🔗' : ''))}</span>
+                        </div>
                     </div>
                     <div class="grid-preview" data-open="${key}">
                         ${hasThumb
@@ -1631,6 +1660,9 @@
             itemsHtml += `
                 <button type="button" class="dropdown-item" data-ctx-act="open">
                     ${isFolder ? '📂 Ordner öffnen' : '👁️ Öffnen / Vorschau'}
+                </button>
+                <button type="button" class="dropdown-item" data-ctx-act="toggle_favorite">
+                    ${item.is_favorite ? '★ Aus Favoriten entfernen' : '⭐ Zu Favoriten hinzufügen'}
                 </button>
             `;
 
@@ -2083,6 +2115,17 @@
             });
         });
 
+        // Favorite Star button
+        $$('.btn-fav', container).forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const type = btn.dataset.favType;
+                const id = parseInt(btn.dataset.favId, 10);
+                await toggleFavoriteItem(type, id, btn);
+            });
+        });
+
         // Click to Open Folder or File Preview
         $$('[data-open]', container).forEach((el) => {
             el.addEventListener('click', (e) => {
@@ -2242,6 +2285,10 @@
                 openVaultModal(item);
                 break;
 
+            case 'toggle_favorite':
+                await toggleFavoriteItem(item.type, item.id);
+                break;
+
             case 'unzip':
                 openZipModal(item);
                 break;
@@ -2249,6 +2296,33 @@
             case 'share':
                 openShareModal(item);
                 break;
+        }
+    }
+
+    async function toggleFavoriteItem(type, id, btnElement = null) {
+        try {
+            const res = await apiPost('toggle_favorite', { type, id });
+            const isFav = Boolean(res.is_favorite);
+            const list = type === 'folder' ? state.folders : state.files;
+            const item = list.find((x) => x.id === id);
+            if (item) {
+                item.is_favorite = isFav;
+            }
+            if (state.view === 'favorites' && !isFav) {
+                loadCurrentView();
+                toast('Aus Favoriten entfernt.');
+                return;
+            }
+            if (btnElement) {
+                btnElement.classList.toggle('is-fav', isFav);
+                btnElement.textContent = isFav ? '★' : '☆';
+                btnElement.title = isFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen';
+            } else {
+                renderItems();
+            }
+            toast(isFav ? 'Zu Favoriten hinzugefügt.' : 'Aus Favoriten entfernt.');
+        } catch (err) {
+            toast(err.message, 'error');
         }
     }
 

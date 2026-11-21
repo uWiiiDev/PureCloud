@@ -759,6 +759,38 @@ html[data-theme="light"] .alert-success {
     border-bottom: none;
 }
 
+.item-cell-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-fav {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.2rem 0.25rem;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    transition: color 0.15s ease, transform 0.15s ease;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.btn-fav:hover {
+    color: #f59e0b;
+    transform: scale(1.22);
+}
+
+.btn-fav.is-fav {
+    color: #f59e0b;
+}
+
 .item-cell {
     display: flex;
     align-items: center;

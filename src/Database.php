@@ -210,6 +210,17 @@ class Database
 
             CREATE INDEX IF NOT EXISTS idx_group_shares_group ON group_shares(target_group_id);
             CREATE INDEX IF NOT EXISTS idx_group_shares_item ON group_shares(item_type, item_id);
+
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id INTEGER NOT NULL,
+                item_type TEXT NOT NULL CHECK(item_type IN ('file', 'folder')),
+                item_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, item_type, item_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
         ");
 
         // Auto-migrate 2FA columns on existing users table

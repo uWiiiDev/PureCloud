@@ -273,6 +273,15 @@ try {
             $folder   = FileManager::createFolder($userId, $parentId, $name);
             jsonResponse(['ok' => true, 'folder' => $folder]);
 
+        case 'toggle_favorite':
+            $type   = (string)($input['type'] ?? $input['item_type'] ?? '');
+            $itemId = (int)($input['id'] ?? $input['item_id'] ?? 0);
+            if (!in_array($type, ['file', 'folder'], true) || $itemId <= 0) {
+                jsonResponse(['ok' => false, 'error' => 'Ungültige Parameter.'], 400);
+            }
+            $isFav = FileManager::toggleFavorite($userId, $type, $itemId);
+            jsonResponse(['ok' => true, 'is_favorite' => $isFav]);
+
         case 'rename':
             FileManager::renameItem(
                 $userId,

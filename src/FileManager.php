@@ -168,6 +168,54 @@ class FileManager
         $currentFolder = null;
         $permission = 'owner';
 
+        $favFolders = [];
+        $favFiles = [];
+        $favStmt = $pdo->prepare('SELECT item_type, item_id FROM favorites WHERE user_id = :uid');
+        $favStmt->execute([':uid' => $userId]);
+        foreach ($favStmt->fetchAll() as $fav) {
+            if ($fav['item_type'] === 'folder') {
+                $favFolders[(int)$fav['item_id']] = true;
+            } else {
+                $favFiles[(int)$fav['item_id']] = true;
+            }
+        }
+
+        if ($view === 'favorites') {
+            $fStmt = $pdo->prepare("
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.created_at, f.updated_at,
+                       (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) AS share_count,
+                       (SELECT COUNT(*) FROM files fl WHERE fl.folder_id = f.id AND fl.is_encrypted = 1 AND fl.deleted_at IS NULL) AS encrypted_count,
+                       1 AS is_favorite
+                FROM favorites fav
+                JOIN folders f ON f.id = fav.item_id AND fav.item_type = 'folder'
+                WHERE fav.user_id = :uid AND f.deleted_at IS NULL
+                ORDER BY f.name COLLATE NOCASE ASC
+            ");
+            $fStmt->execute([':uid' => $userId]);
+            $folders = $fStmt->fetchAll();
+
+            $fileStmt = $pdo->prepare("
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                       (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) AS share_count,
+                       1 AS is_favorite
+                FROM favorites fav
+                JOIN files fl ON fl.id = fav.item_id AND fav.item_type = 'file'
+                WHERE fav.user_id = :uid AND fl.deleted_at IS NULL
+                ORDER BY fl.name COLLATE NOCASE ASC
+            ");
+            $fileStmt->execute([':uid' => $userId]);
+            $files = $fileStmt->fetchAll();
+
+            return [
+                'view'           => 'favorites',
+                'current_folder' => null,
+                'permission'     => 'owner',
+                'breadcrumbs'    => [['id' => null, 'name' => 'Favoriten']],
+                'folders'        => self::formatFolders($folders, $favFolders),
+                'files'          => self::formatFiles($files, $favFiles),
+            ];
+        }
+
         if ($view === 'trash') {
             $fStmt = $pdo->prepare('
                 SELECT id, name, parent_id, deleted_at, created_at, updated_at
@@ -192,8 +240,8 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Papierkorb']],
-                'folders'        => self::formatFolders($folders),
-                'files'          => self::formatFiles($files),
+                'folders'        => self::formatFolders($folders, $favFolders),
+                'files'          => self::formatFiles($files, $favFiles),
             ];
         }
 
@@ -213,7 +261,7 @@ class FileManager
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Tresor (Verschlüsselt)']],
                 'folders'        => [],
-                'files'          => self::formatFiles($files),
+                'files'          => self::formatFiles($files, $favFiles),
             ];
         }
 
@@ -265,8 +313,8 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'read',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Für mich freigegeben']],
-                'folders'        => self::formatFolders($folders),
-                'files'          => self::formatFiles($files),
+                'folders'        => self::formatFolders($folders, $favFolders),
+                'files'          => self::formatFiles($files, $favFiles),
             ];
         }
 
@@ -298,8 +346,8 @@ class FileManager
                 'current_folder' => null,
                 'permission'     => 'owner',
                 'breadcrumbs'    => [['id' => null, 'name' => 'Suche: "' . $search . '"']],
-                'folders'        => self::formatFolders($folders),
-                'files'          => self::formatFiles($files),
+                'folders'        => self::formatFolders($folders, $favFolders),
+                'files'          => self::formatFiles($files, $favFiles),
             ];
         }
 
@@ -329,7 +377,7 @@ class FileManager
                     ['id' => null, 'name' => 'Meine Dateien'],
                     ['id' => -1,   'name' => 'Gruppenordner'],
                 ],
-                'folders'        => self::formatFolders($gfStmt->fetchAll()),
+                'folders'        => self::formatFolders($gfStmt->fetchAll(), $favFolders),
                 'files'          => [],
             ];
         }
@@ -391,7 +439,7 @@ class FileManager
                 ORDER BY f.name COLLATE NOCASE ASC
             ");
             $fStmt->execute([':uid' => $effectiveOwnerId]);
-            $formattedFolders = self::formatFolders($fStmt->fetchAll());
+            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders);
 
             // Check if user has any assigned Group Folders -> bundle them into one "Gruppenordner" entry!
             $gfCntStmt = $pdo->prepare("
@@ -445,7 +493,7 @@ class FileManager
                 ORDER BY f.name COLLATE NOCASE ASC
             ");
             $fStmt->execute([':uid' => $effectiveOwnerId, ':pid' => $folderId]);
-            $formattedFolders = self::formatFolders($fStmt->fetchAll());
+            $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders);
 
             $fileStmt = $pdo->prepare("
                 SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
@@ -466,11 +514,11 @@ class FileManager
             'is_group_tree'  => $isGroupTree,
             'breadcrumbs'    => $breadcrumbs,
             'folders'        => $formattedFolders,
-            'files'          => self::formatFiles($fileStmt->fetchAll()),
+            'files'          => self::formatFiles($fileStmt->fetchAll(), $favFiles),
         ];
     }
 
-    private static function formatFolders(array $rows): array
+    private static function formatFolders(array $rows, array $favFolders = []): array
     {
         $out = [];
         $seen = [];
@@ -486,6 +534,7 @@ class FileManager
                 'name'              => $r['name'],
                 'parent_id'         => isset($r['parent_id']) && $r['parent_id'] !== null ? (int)$r['parent_id'] : null,
                 'is_group_folder'   => (int)($r['is_group_folder'] ?? 0) === 1,
+                'is_favorite'       => !empty($favFolders[$fid]) || !empty($r['is_favorite']),
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'encrypted_count'   => (int)($r['encrypted_count'] ?? 0),
                 'group_name'        => $r['group_name'] ?? null,
@@ -499,13 +548,14 @@ class FileManager
         return $out;
     }
 
-    private static function formatFiles(array $rows): array
+    private static function formatFiles(array $rows, array $favFiles = []): array
     {
         $out = [];
         foreach ($rows as $r) {
+            $fid = (int)$r['id'];
             $ext = strtolower(pathinfo($r['name'], PATHINFO_EXTENSION));
             $out[] = [
-                'id'                => (int)$r['id'],
+                'id'                => $fid,
                 'type'              => 'file',
                 'folder_id'         => isset($r['folder_id']) && $r['folder_id'] !== null ? (int)$r['folder_id'] : null,
                 'name'              => $r['name'],
@@ -513,6 +563,7 @@ class FileManager
                 'mime_type'         => $r['mime_type'],
                 'size_bytes'        => (int)$r['size_bytes'],
                 'is_encrypted'      => (int)$r['is_encrypted'] === 1,
+                'is_favorite'       => !empty($favFiles[$fid]) || !empty($r['is_favorite']),
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'shared_permission' => $r['shared_permission'] ?? null,
                 'owner_name'        => $r['owner_name'] ?? null,
@@ -1825,5 +1876,21 @@ class FileManager
         }
 
         return $totalEncrypted;
+    }
+
+    public static function toggleFavorite(int $userId, string $itemType, int $itemId): bool
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT 1 FROM favorites WHERE user_id = :uid AND item_type = :type AND item_id = :id');
+        $stmt->execute([':uid' => $userId, ':type' => $itemType, ':id' => $itemId]);
+        if ($stmt->fetch()) {
+            $del = $pdo->prepare('DELETE FROM favorites WHERE user_id = :uid AND item_type = :type AND item_id = :id');
+            $del->execute([':uid' => $userId, ':type' => $itemType, ':id' => $itemId]);
+            return false;
+        } else {
+            $ins = $pdo->prepare('INSERT OR IGNORE INTO favorites (user_id, item_type, item_id) VALUES (:uid, :type, :id)');
+            $ins->execute([':uid' => $userId, ':type' => $itemType, ':id' => $itemId]);
+            return true;
+        }
     }
 }
