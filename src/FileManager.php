@@ -2561,9 +2561,9 @@ class FileManager
     {
         $pdo = Database::get();
 
-        $uStmt = $pdo->prepare('SELECT is_admin FROM users WHERE id = :uid');
+        $uStmt = $pdo->prepare('SELECT role FROM users WHERE id = :uid');
         $uStmt->execute([':uid' => $userId]);
-        $isAdmin = (bool)$uStmt->fetchColumn();
+        $isAdmin = ($uStmt->fetchColumn() === 'admin');
 
         $fileWhere = $isAdmin ? 'WHERE f.deleted_at IS NULL' : 'WHERE f.owner_id = ' . (int)$userId . ' AND f.deleted_at IS NULL';
         $filesStmt = $pdo->query("
