@@ -4439,6 +4439,7 @@
                     <button type="button" class="tab-btn ${activeTab === 'adm-groups' ? 'active' : ''}" data-adm-tab="adm-groups">👪 Gruppen (${groups.length})</button>
                     <button type="button" class="tab-btn ${activeTab === 'adm-group-folders' ? 'active' : ''}" data-adm-tab="adm-group-folders">📂 Gruppenordner (${groupFolders.length})</button>
                     <button type="button" class="tab-btn ${activeTab === 'adm-settings' ? 'active' : ''}" data-adm-tab="adm-settings">🛠️ System</button>
+                    <button type="button" class="tab-btn ${activeTab === 'adm-update' ? 'active' : ''}" data-adm-tab="adm-update">🚀 GitHub Update</button>
                 </div>
 
                 <div id="adm-users" class="${activeTab === 'adm-users' ? '' : 'hidden'}">
@@ -4566,21 +4567,189 @@
                                 WebDAV-Netzlaufwerk-Schnittstelle aktivieren
                             </label>
                         </div>
+                        <div class="form-row" style="margin-bottom:0.75rem">
+                            <div style="flex:2">
+                                <label class="small muted">GitHub Repository (Owner/Repo)</label>
+                                <input type="text" name="github_repo" class="input" value="${esc(settings.github_repo || 'uWiiiDev/PureCloud')}">
+                            </div>
+                            <div style="flex:1">
+                                <label class="small muted">Branch</label>
+                                <input type="text" name="github_branch" class="input" value="${esc(settings.github_branch || 'main')}">
+                            </div>
+                        </div>
                         <button type="submit" class="btn btn-primary">Einstellungen speichern</button>
                     </form>
+                </div>
+
+                <div id="adm-update" class="${activeTab === 'adm-update' ? '' : 'hidden'}">
+                    <div style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg);margin-bottom:1rem">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
+                            <div>
+                                <h4 style="margin:0 0 0.25rem;display:flex;align-items:center;gap:0.5rem">
+                                    <span>🐙 GitHub Repository</span>
+                                    <span id="adm-update-badge" class="badge" style="font-size:0.75rem;padding:0.2rem 0.5rem;background:var(--bg-secondary);border:1px solid var(--border)">Wird geprüft…</span>
+                                </h4>
+                                <div class="small muted" id="adm-update-repo-info">Ziel: <a href="https://github.com/${esc(settings.github_repo || 'uWiiiDev/PureCloud')}" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:underline">${esc(settings.github_repo || 'uWiiiDev/PureCloud')}</a> (Branch: <code>${esc(settings.github_branch || 'main')}</code>)</div>
+                            </div>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-adm-check-update">🔄 Jetzt prüfen</button>
+                        </div>
+
+                        <div id="adm-update-details" style="font-size:0.9rem;line-height:1.5;color:var(--text)">
+                            <p class="muted small" style="margin:0.5rem 0">Klicken Sie auf „Jetzt prüfen“ oder wechseln Sie in diesen Tab, um Updates abzufragen.</p>
+                        </div>
+                    </div>
+
+                    <div id="adm-update-action-box" class="hidden" style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg-secondary)">
+                        <h4 style="margin:0 0 0.5rem">⚡ Update durchführen</h4>
+                        <p class="small muted" style="margin:0 0 0.75rem">
+                            Das Update aktualisiert die PureCloud-Dateien direkt vom GitHub-Repository. 
+                            <strong>Ihre Daten, Datenbank und Dateien in <code>storage/</code> bleiben garantiert unangetastet.</strong>
+                        </p>
+                        <button type="button" class="btn btn-primary" id="btn-adm-run-update">
+                            🚀 Jetzt auf neueste Version aktualisieren
+                        </button>
+                    </div>
+
+                    <div id="adm-update-log-box" class="hidden" style="margin-top:1rem;padding:0.75rem;border-radius:8px;background:#1e1e1e;color:#d4d4d4;font-family:monospace;font-size:0.8rem;white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
                 </div>
             `, true);
 
             const body = $('#modal-body');
+            let updateLoaded = false;
             $$('[data-adm-tab]', body).forEach((btn) => {
                 btn.addEventListener('click', () => {
                     $$('[data-adm-tab]', body).forEach((b) => b.classList.remove('active'));
                     btn.classList.add('active');
-                    ['adm-users', 'adm-groups', 'adm-group-folders', 'adm-settings'].forEach((id) => {
-                        $(`#${id}`, body).classList.toggle('hidden', btn.dataset.admTab !== id);
+                    ['adm-users', 'adm-groups', 'adm-group-folders', 'adm-settings', 'adm-update'].forEach((id) => {
+                        $(`#${id}`, body)?.classList.toggle('hidden', btn.dataset.admTab !== id);
                     });
+                    if (btn.dataset.admTab === 'adm-update' && !updateLoaded) {
+                        loadUpdateInfo();
+                    }
                 });
             });
+
+            async function loadUpdateInfo() {
+                const badge = $('#adm-update-badge', body);
+                const details = $('#adm-update-details', body);
+                const actionBox = $('#adm-update-action-box', body);
+                const logBox = $('#adm-update-log-box', body);
+                if (!badge || !details) return;
+
+                badge.style.background = 'var(--bg-secondary)';
+                badge.style.color = 'var(--text-muted)';
+                badge.textContent = '⏳ Wird geprüft…';
+                details.innerHTML = '<p class="muted small" style="margin:0.5rem 0">Frage GitHub API ab…</p>';
+                actionBox?.classList.add('hidden');
+                logBox?.classList.add('hidden');
+
+                try {
+                    const res = await apiPost('admin_check_update');
+                    const d = res.data;
+                    updateLoaded = true;
+
+                    const curSha = d.current?.sha ? d.current.sha.substring(0, 7) : 'Unbekannt';
+                    const curDate = d.current?.date ? new Date(d.current.date).toLocaleString('de-DE') : '—';
+                    const curMsg = d.current?.message || '';
+
+                    const latSha = d.latest?.sha ? d.latest.sha.substring(0, 7) : 'Unbekannt';
+                    const latDate = d.latest?.date ? new Date(d.latest.date).toLocaleString('de-DE') : '—';
+                    const latMsg = d.latest?.message || '';
+                    const latAuthor = d.latest?.author || '';
+
+                    if (d.has_update) {
+                        badge.style.background = '#2563eb';
+                        badge.style.color = '#fff';
+                        badge.textContent = '🚀 Neues Update verfügbar';
+                    } else {
+                        badge.style.background = '#10b981';
+                        badge.style.color = '#fff';
+                        badge.textContent = '✅ Auf neuestem Stand';
+                    }
+
+                    details.innerHTML = `
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:0.75rem;margin-top:0.75rem">
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary)">
+                                <div class="small muted" style="font-weight:600;margin-bottom:0.35rem">📦 Installierte Version</div>
+                                <div><strong>Commit:</strong> <code>${curSha}</code></div>
+                                <div class="small muted"><strong>Stand:</strong> ${curDate}</div>
+                                ${curMsg ? `<div class="small muted" style="margin-top:0.25rem;font-style:italic">„${esc(curMsg.split('\n')[0])}“</div>` : ''}
+                                <div class="small muted" style="margin-top:0.35rem;font-size:0.75rem">Modus: ${d.is_git ? 'Git Repository' : 'Direkte Installation (ZIP)'}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary)">
+                                <div class="small muted" style="font-weight:600;margin-bottom:0.35rem">🌐 Neueste Version auf GitHub</div>
+                                <div><strong>Commit:</strong> <code>${latSha}</code></div>
+                                <div class="small muted"><strong>Stand:</strong> ${latDate} ${latAuthor ? `(${esc(latAuthor)})` : ''}</div>
+                                ${latMsg ? `<div class="small muted" style="margin-top:0.25rem;font-style:italic">„${esc(latMsg.split('\n')[0])}“</div>` : ''}
+                                <div class="small muted" style="margin-top:0.35rem;font-size:0.75rem"><a href="https://github.com/${esc(d.repo)}/commit/${latSha}" target="_blank" rel="noopener" style="color:var(--primary)">Auf GitHub ansehen ↗</a></div>
+                            </div>
+                        </div>
+                    `;
+
+                    if (actionBox) {
+                        actionBox.classList.remove('hidden');
+                        const runBtn = $('#btn-adm-run-update', actionBox);
+                        if (runBtn) {
+                            if (d.has_update) {
+                                runBtn.innerHTML = `🚀 Jetzt auf Version <code>${latSha}</code> aktualisieren`;
+                                runBtn.className = 'btn btn-primary';
+                            } else {
+                                runBtn.innerHTML = `🔄 Neu von GitHub herunterladen (<code>${latSha}</code> erzwingen)`;
+                                runBtn.className = 'btn btn-secondary';
+                            }
+                        }
+                    }
+                } catch (err) {
+                    badge.style.background = '#ef4444';
+                    badge.style.color = '#fff';
+                    badge.textContent = '⚠️ Abfragefehler';
+                    details.innerHTML = `<div style="color:var(--danger);padding:0.5rem 0"><strong>Fehler beim Prüfen:</strong> ${esc(err.message)}</div>`;
+                }
+            }
+
+            $('#btn-adm-check-update', body)?.addEventListener('click', () => loadUpdateInfo());
+
+            $('#btn-adm-run-update', body)?.addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                if (!confirm('PureCloud jetzt über GitHub aktualisieren?\n\nAlle Anwendungsdateien werden aktualisiert. Ihre Daten, Datenbank und Dateien in storage/ bleiben garantiert erhalten.')) {
+                    return;
+                }
+
+                const logBox = $('#adm-update-log-box', body);
+                btn.disabled = true;
+                btn.innerHTML = '⏳ Update wird durchgeführt… Bitte warten…';
+                if (logBox) {
+                    logBox.classList.remove('hidden');
+                    logBox.textContent = '🚀 Starte Update-Vorgang…\nVerbindung zu GitHub wird aufgebaut…\n';
+                }
+
+                try {
+                    const res = await apiPost('admin_perform_update');
+                    const r = res.result;
+                    toast(r.message || 'Update erfolgreich installiert!', 'success');
+                    if (logBox) {
+                        const logs = Array.isArray(r.log) ? r.log.join('\n') : '';
+                        logBox.textContent += `\n${logs}\n\n✅ Fertig! Installierter Commit: ${r.new_sha ? r.new_sha.substring(0, 7) : 'OK'}`;
+                    }
+                    btn.innerHTML = '✅ Update abgeschlossen – Seite wird neu geladen…';
+                    btn.className = 'btn btn-primary';
+                    btn.disabled = true;
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } catch (err) {
+                    toast(`Update fehlgeschlagen: ${err.message}`, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = '❌ Erneut versuchen';
+                    if (logBox) {
+                        logBox.textContent += `\n❌ FEHLER: ${err.message}\n`;
+                    }
+                }
+            });
+
+            if (activeTab === 'adm-update') {
+                loadUpdateInfo();
+            }
 
             // Group Folder create/edit/delete handlers
             $$('[data-edit-gf]', body).forEach((btn) => {
@@ -4727,6 +4896,8 @@
                     const sRes = await apiPost('admin_save_settings', {
                         app_name: fd.get('app_name'),
                         enable_webdav: fd.get('enable_webdav') === '1',
+                        github_repo: fd.get('github_repo'),
+                        github_branch: fd.get('github_branch'),
                     });
                     state.appName = sRes.settings.app_name;
                     $('#app-title-text').textContent = state.appName;

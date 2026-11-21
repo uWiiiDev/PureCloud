@@ -758,7 +758,26 @@ try {
             if (isset($input['enable_webdav'])) {
                 Database::setSetting('enable_webdav', !empty($input['enable_webdav']) ? '1' : '0');
             }
+            if (isset($input['github_repo']) && trim((string)$input['github_repo']) !== '') {
+                Database::setSetting('github_repo', trim((string)$input['github_repo']));
+            }
+            if (isset($input['github_branch']) && trim((string)$input['github_branch']) !== '') {
+                Database::setSetting('github_branch', trim((string)$input['github_branch']));
+            }
             jsonResponse(['ok' => true, 'settings' => Database::getSettings()]);
+
+        case 'admin_check_update':
+            if ($user['role'] !== 'admin') {
+                throw new RuntimeException('Nur für Administratoren.');
+            }
+            jsonResponse(['ok' => true, 'data' => AppUpdater::checkUpdate()]);
+
+        case 'admin_perform_update':
+            if ($user['role'] !== 'admin') {
+                throw new RuntimeException('Nur für Administratoren.');
+            }
+            $result = AppUpdater::performUpdate();
+            jsonResponse(['ok' => true, 'result' => $result]);
 
         default:
             jsonResponse(['ok' => false, 'error' => 'Unbekannte Aktion: ' . $action], 400);
