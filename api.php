@@ -17,7 +17,7 @@ Auth::sendSecurityHeaders();
 
 if (!isset($_SESSION['last_auto_purge']) || (time() - (int)$_SESSION['last_auto_purge'] > 3600)) {
     $_SESSION['last_auto_purge'] = time();
-    $purgeDays = (int)(Database::getSetting('trash_auto_purge_days') ?? 30);
+    $purgeDays = (int)(Database::getSetting('trash_retention_days') ?? Database::getSetting('trash_auto_purge_days') ?? 30);
     if ($purgeDays > 0) {
         FileManager::autoPurgeTrash($purgeDays);
     }

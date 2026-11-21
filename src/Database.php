@@ -329,6 +329,12 @@ class Database
         return $out;
     }
 
+    public static function getSetting(string $key, ?string $default = null): ?string
+    {
+        $settings = self::getSettings();
+        return $settings[$key] ?? $default;
+    }
+
     public static function setSetting(string $key, string $value): void
     {
         $pdo = self::get();
