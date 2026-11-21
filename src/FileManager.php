@@ -2510,4 +2510,173 @@ class FileManager
 
         return $count;
     }
+
+    public static function batchRename(int $userId, array $renames): array
+    {
+        if (empty($renames)) {
+            return ['renamed' => 0];
+        }
+
+        $pdo = Database::get();
+        $pdo->beginTransaction();
+        $renamed = 0;
+        try {
+            // First phase: Rename each item to a unique temporary name to prevent collision with other items in the batch
+            $itemsToFinalize = [];
+            foreach ($renames as $entry) {
+                $type = (string)($entry['type'] ?? 'file');
+                $id   = (int)($entry['id'] ?? 0);
+                $rawTargetName = trim((string)($entry['name'] ?? ''));
+                $targetName = self::sanitizeName($rawTargetName);
+                if ($id <= 0 || $targetName === '') {
+                    continue;
+                }
+
+                $tmpName = '__batch_' . $id . '_' . bin2hex(random_bytes(4)) . '_' . $targetName;
+                if ($type === 'folder') {
+                    $pdo->prepare("UPDATE folders SET name = :name WHERE id = :id")->execute([':name' => $tmpName, ':id' => $id]);
+                } else {
+                    $pdo->prepare("UPDATE files SET name = :name WHERE id = :id")->execute([':name' => $tmpName, ':id' => $id]);
+                }
+                $itemsToFinalize[] = ['type' => $type, 'id' => $id, 'target' => $targetName];
+            }
+
+            // Second phase: Rename to final target names with full validation & collision check
+            foreach ($itemsToFinalize as $item) {
+                self::renameItem($userId, $item['type'], $item['id'], $item['target']);
+                $renamed++;
+            }
+
+            $pdo->commit();
+            return ['renamed' => $renamed];
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    public static function getStorageAnalysis(int $userId): array
+    {
+        $pdo = Database::get();
+
+        $uStmt = $pdo->prepare('SELECT is_admin FROM users WHERE id = :uid');
+        $uStmt->execute([':uid' => $userId]);
+        $isAdmin = (bool)$uStmt->fetchColumn();
+
+        $fileWhere = $isAdmin ? 'WHERE f.deleted_at IS NULL' : 'WHERE f.owner_id = ' . (int)$userId . ' AND f.deleted_at IS NULL';
+        $filesStmt = $pdo->query("
+            SELECT f.id, f.folder_id, f.name, f.mime_type, f.size_bytes, f.is_encrypted, f.updated_at
+            FROM files f
+            $fileWhere
+        ");
+        $allFiles = $filesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $folderWhere = $isAdmin ? 'WHERE deleted_at IS NULL' : 'WHERE owner_id = ' . (int)$userId . ' AND deleted_at IS NULL';
+        $foldersStmt = $pdo->query("
+            SELECT id, name, parent_id
+            FROM folders
+            $folderWhere
+        ");
+        $allFolders = $foldersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $folderNames = [];
+        $parentMap   = [];
+        foreach ($allFolders as $f) {
+            $fId = (int)$f['id'];
+            $folderNames[$fId] = $f['name'];
+            $parentMap[$fId]   = $f['parent_id'] !== null ? (int)$f['parent_id'] : null;
+        }
+
+        $catDefs = [
+            'audio' => ['name' => 'Audio / Musik', 'icon' => '🎵', 'color' => '#8b5cf6', 'bytes' => 0, 'count' => 0],
+            'video' => ['name' => 'Videos',         'icon' => '🎬', 'color' => '#3b82f6', 'bytes' => 0, 'count' => 0],
+            'image' => ['name' => 'Bilder / Fotos', 'icon' => '🖼️', 'color' => '#10b981', 'bytes' => 0, 'count' => 0],
+            'pdf'   => ['name' => 'PDF Dokumente',  'icon' => '📕', 'color' => '#ef4444', 'bytes' => 0, 'count' => 0],
+            'zip'   => ['name' => 'Archive (ZIP)',  'icon' => '📦', 'color' => '#f59e0b', 'bytes' => 0, 'count' => 0],
+            'text'  => ['name' => 'Text & Notizen', 'icon' => '📝', 'color' => '#06b6d4', 'bytes' => 0, 'count' => 0],
+            'other' => ['name' => 'Sonstige',       'icon' => '📄', 'color' => '#6b7280', 'bytes' => 0, 'count' => 0],
+        ];
+
+        $totalBytes = 0;
+        $totalFiles = count($allFiles);
+        $directFolderSizes = [];
+
+        foreach ($allFiles as $fl) {
+            $bytes = (int)$fl['size_bytes'];
+            $totalBytes += $bytes;
+
+            $cat = self::categorizeFile($fl['name'], $fl['mime_type']);
+            if (!isset($catDefs[$cat])) {
+                $cat = 'other';
+            }
+            $catDefs[$cat]['bytes'] += $bytes;
+            $catDefs[$cat]['count']++;
+
+            $fid = $fl['folder_id'] !== null ? (int)$fl['folder_id'] : 0;
+            $directFolderSizes[$fid] = ($directFolderSizes[$fid] ?? 0) + $bytes;
+        }
+
+        $cumFolderSizes = [];
+        foreach ($directFolderSizes as $fid => $sz) {
+            if ($fid === 0) continue;
+            $curr = $fid;
+            $visited = [];
+            while ($curr !== null && !isset($visited[$curr])) {
+                $visited[$curr] = true;
+                $cumFolderSizes[$curr] = ($cumFolderSizes[$curr] ?? 0) + $sz;
+                $curr = $parentMap[$curr] ?? null;
+            }
+        }
+
+        arsort($cumFolderSizes);
+
+        $largestFolders = [];
+        $topFolderSlice = array_slice($cumFolderSizes, 0, 8, true);
+        foreach ($topFolderSlice as $fId => $sz) {
+            $largestFolders[] = [
+                'id'         => $fId,
+                'name'       => $folderNames[$fId] ?? 'Ordner #' . $fId,
+                'path'       => self::getFolderPathString($userId, $fId),
+                'bytes'      => $sz,
+                'percent'    => $totalBytes > 0 ? round(($sz / $totalBytes) * 100, 1) : 0,
+            ];
+        }
+
+        usort($allFiles, fn($a, $b) => ((int)$b['size_bytes']) <=> ((int)$a['size_bytes']));
+        $largestFiles = [];
+        foreach (array_slice($allFiles, 0, 10) as $fl) {
+            $cat = self::categorizeFile($fl['name'], $fl['mime_type']);
+            $fId = $fl['folder_id'] !== null ? (int)$fl['folder_id'] : null;
+            $largestFiles[] = [
+                'id'          => (int)$fl['id'],
+                'name'        => $fl['name'],
+                'size_bytes'  => (int)$fl['size_bytes'],
+                'category'    => $cat,
+                'folder_id'   => $fId,
+                'folder_name' => $fId ? ($folderNames[$fId] ?? 'Ordner') : 'Hauptverzeichnis',
+                'updated_at'  => $fl['updated_at'],
+            ];
+        }
+
+        $categoriesOut = [];
+        foreach ($catDefs as $k => $c) {
+            if ($c['count'] > 0) {
+                $c['key'] = $k;
+                $c['percent'] = $totalBytes > 0 ? round(($c['bytes'] / $totalBytes) * 100, 1) : 0;
+                $categoriesOut[] = $c;
+            }
+        }
+        usort($categoriesOut, fn($a, $b) => $b['bytes'] <=> $a['bytes']);
+
+        return [
+            'total_bytes'     => $totalBytes,
+            'total_files'     => $totalFiles,
+            'total_folders'   => count($allFolders),
+            'categories'      => $categoriesOut,
+            'largest_folders' => $largestFolders,
+            'largest_files'   => $largestFiles,
+        ];
+    }
 }

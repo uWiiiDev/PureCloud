@@ -2191,6 +2191,20 @@
                     </button>
                 `;
             }
+            if (!isFolder && item.category === 'image' && !item.is_encrypted && ['owner', 'write'].includes(state.permission)) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="optimize_image">
+                        🗜️ Bild optimieren (WebP)
+                    </button>
+                `;
+            }
+            if (isFolder && !isTrash) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="storage_radar">
+                        📊 Speicherplatz-Radar
+                    </button>
+                `;
+            }
             if (['owner', 'write'].includes(state.permission)) {
                 if (isFolder) {
                     itemsHtml += `
@@ -2207,11 +2221,13 @@
                 }
             }
             if (['owner', 'write'].includes(state.permission) && !item.is_group_folder) {
-                itemsHtml += `
-                    <div class="dropdown-divider"></div>
-                    <button type="button" class="dropdown-item" data-ctx-act="rename">✏️ Umbenennen</button>
-                    <button type="button" class="dropdown-item dropdown-item-danger" data-ctx-act="trash">🗑️ In den Papierkorb</button>
-                `;
+                itemsHtml += `<div class="dropdown-divider"></div>`;
+                if (targetItems.length > 1) {
+                    itemsHtml += `<button type="button" class="dropdown-item" data-ctx-act="batch_rename">🏷️ Massen-Umbenennung (${targetItems.length})</button>`;
+                } else {
+                    itemsHtml += `<button type="button" class="dropdown-item" data-ctx-act="rename">✏️ Umbenennen</button>`;
+                }
+                itemsHtml += `<button type="button" class="dropdown-item dropdown-item-danger" data-ctx-act="trash">🗑️ In den Papierkorb</button>`;
             }
         }
 
@@ -2733,6 +2749,8 @@
         const isTrash = state.view === 'trash';
         const selectedList = Array.from(state.selected.values());
         const allPdfs = selectedList.length >= 2 && selectedList.every((it) => it.type === 'file' && (it.mime_type === 'application/pdf' || it.name.toLowerCase().endsWith('.pdf')));
+        const canRename = !isTrash && count >= 2 && ['owner', 'write'].includes(state.permission);
+        $('#btn-bulk-rename')?.classList.toggle('hidden', !canRename);
         $('#btn-bulk-merge-pdf')?.classList.toggle('hidden', isTrash || !allPdfs);
         $('#btn-bulk-copy')?.classList.toggle('hidden', isTrash);
         $('#btn-bulk-cut')?.classList.toggle('hidden', isTrash);
@@ -2741,6 +2759,16 @@
         $('#btn-bulk-restore').classList.toggle('hidden', !isTrash);
         $('#btn-bulk-purge').classList.toggle('hidden', !isTrash);
     }
+
+    $('#btn-bulk-rename')?.addEventListener('click', () => {
+        const items = Array.from(state.selected.values());
+        if (items.length >= 2) {
+            openBatchRenameModal(items);
+        }
+    });
+
+    $('#btn-storage-radar')?.addEventListener('click', () => openStorageAnalysisModal());
+    $('#btn-quota-radar')?.addEventListener('click', () => openStorageAnalysisModal());
 
     $('#btn-bulk-merge-pdf')?.addEventListener('click', async () => {
         const items = Array.from(state.selected.values()).filter((it) => it.type === 'file');
@@ -2796,6 +2824,19 @@
 
             case 'ocr':
                 openOcrModal(item);
+                break;
+
+            case 'optimize_image':
+                openImageOptimizeModal(item);
+                break;
+
+            case 'batch_rename':
+                const batchItems = state.selected.size > 1 ? Array.from(state.selected.values()) : [item];
+                openBatchRenameModal(batchItems);
+                break;
+
+            case 'storage_radar':
+                openStorageAnalysisModal();
                 break;
 
             case 'rename':
@@ -3343,6 +3384,7 @@
                 </div>
                 <div style="display:flex;gap:0.35rem;align-items:center">
                     ${(!file.is_encrypted && (file.category === 'image' || file.category === 'pdf')) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-ocr">🔍 Text erkennen (OCR)</button>` : ''}
+                    ${(!file.is_encrypted && file.category === 'image' && ['owner', 'write'].includes(state.permission)) ? `<button type="button" class="btn btn-ghost btn-sm" id="modal-btn-optimize">🗜️ Optimieren</button>` : ''}
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-note">📝 ${file.notes ? 'Notiz' : '+ Notiz'}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-versions">🕒 Versionen ${file.version_count > 0 ? `(${file.version_count + 1})` : ''}</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-vault">🔒 Verschlüsseln</button>
@@ -3354,6 +3396,10 @@
         $('#modal-btn-ocr')?.addEventListener('click', () => {
             closeModal();
             openOcrModal(file);
+        });
+        $('#modal-btn-optimize')?.addEventListener('click', () => {
+            closeModal();
+            openImageOptimizeModal(file);
         });
         $('#modal-btn-vault')?.addEventListener('click', () => {
             openVaultModal(file);
@@ -3748,6 +3794,566 @@
         setTimeout(() => {
             runOcr();
         }, 150);
+    }
+
+    // Batch Rename Modal
+    function openBatchRenameModal(items) {
+        if (!items || items.length === 0) return;
+
+        openModal(`🏷️ Massen-Umbenennung (${items.length} Elemente)`, `
+            <div style="display:flex;flex-direction:column;gap:0.85rem">
+                <!-- Mode Tabs -->
+                <div class="rename-mode-nav">
+                    <button type="button" class="btn btn-sm btn-primary" data-rename-mode="numbering">🔢 Nummerierung</button>
+                    <button type="button" class="btn btn-sm btn-ghost" data-rename-mode="replace">🔍 Suchen & Ersetzen</button>
+                    <button type="button" class="btn btn-sm btn-ghost" data-rename-mode="affix">➕ Präfix / Suffix</button>
+                    <button type="button" class="btn btn-sm btn-ghost" data-rename-mode="case">🔤 Schreibweise</button>
+                </div>
+
+                <!-- Mode 1: Numbering & Pattern -->
+                <div id="rename-box-numbering" class="form-group-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+                    <div class="form-group" style="grid-column:1 / -1">
+                        <label class="small text-muted">Muster-Name (Basis)</label>
+                        <input type="text" id="rename-base-name" class="input" placeholder="z. B. Urlaub_Kreta" value="Element">
+                    </div>
+                    <div class="form-group">
+                        <label class="small text-muted">Zählerformat</label>
+                        <select id="rename-counter-digits" class="input">
+                            <option value="1">1, 2, 3 …</option>
+                            <option value="2" selected>01, 02, 03 …</option>
+                            <option value="3">001, 002, 003 …</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="small text-muted">Startwert</label>
+                        <input type="number" id="rename-start-num" class="input" value="1" min="0">
+                    </div>
+                </div>
+
+                <!-- Mode 2: Search & Replace -->
+                <div id="rename-box-replace" class="form-group-wrap hidden" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+                    <div class="form-group">
+                        <label class="small text-muted">Suchen nach</label>
+                        <input type="text" id="rename-search-str" class="input" placeholder="z. B. IMG_">
+                    </div>
+                    <div class="form-group">
+                        <label class="small text-muted">Ersetzen durch</label>
+                        <input type="text" id="rename-replace-str" class="input" placeholder="z. B. Foto_">
+                    </div>
+                    <div style="grid-column:1 / -1">
+                        <label class="checkbox-label small">
+                            <input type="checkbox" id="rename-case-sensitive"> Groß-/Kleinschreibung beachten
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Mode 3: Affix (Prefix & Suffix) -->
+                <div id="rename-box-affix" class="form-group-wrap hidden" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+                    <div class="form-group">
+                        <label class="small text-muted">Präfix (voranstellen)</label>
+                        <input type="text" id="rename-prefix-str" class="input" placeholder="z. B. 2026-11-21_">
+                    </div>
+                    <div class="form-group">
+                        <label class="small text-muted">Suffix (anhängen)</label>
+                        <input type="text" id="rename-suffix-str" class="input" placeholder="z. B. _bearbeitet">
+                    </div>
+                </div>
+
+                <!-- Mode 4: Case -->
+                <div id="rename-box-case" class="form-group-wrap hidden">
+                    <label class="small text-muted">Groß-/Kleinschreibung anpassen</label>
+                    <select id="rename-case-select" class="input">
+                        <option value="lower">kleinbuchstaben (foto_01.jpg)</option>
+                        <option value="upper">GROSSBUCHSTABEN (FOTO_01.JPG)</option>
+                        <option value="title">Wortanfänge Groß (Foto_01.Jpg)</option>
+                    </select>
+                </div>
+
+                <!-- Preview Area -->
+                <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg-main)">
+                    <div style="padding:0.4rem 0.65rem;background:var(--bg-secondary);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;font-size:0.75rem;font-weight:600;color:var(--text-muted)">
+                        <span>Vorschau der Umbenennung</span>
+                        <span id="rename-conflict-warning" style="color:#ef4444;font-weight:700"></span>
+                    </div>
+                    <div style="max-height:190px;overflow-y:auto">
+                        <table class="batch-rename-table">
+                            <thead>
+                                <tr><th>Original</th><th></th><th>Neuer Name</th></tr>
+                            </thead>
+                            <tbody id="rename-preview-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;padding-top:0.4rem;border-top:1px solid var(--border)">
+                    <button type="button" class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+                    <button type="button" class="btn btn-primary" id="btn-submit-batch-rename">💾 Alle ${items.length} umbenennen</button>
+                </div>
+            </div>
+        `, true);
+
+        let activeMode = 'numbering';
+
+        $$('[data-rename-mode]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                activeMode = btn.dataset.renameMode;
+                $$('[data-rename-mode]').forEach((b) => {
+                    b.classList.toggle('btn-primary', b === btn);
+                    b.classList.toggle('btn-ghost', b !== btn);
+                });
+                ['numbering', 'replace', 'affix', 'case'].forEach((m) => {
+                    $(`#rename-box-${m}`)?.classList.toggle('hidden', m !== activeMode);
+                });
+                updatePreview();
+            });
+        });
+
+        function computeNewName(originalName, index, isFolder) {
+            let ext = '';
+            let base = originalName;
+            if (!isFolder && originalName.includes('.')) {
+                const dot = originalName.lastIndexOf('.');
+                ext = originalName.substring(dot);
+                base = originalName.substring(0, dot);
+            }
+
+            if (activeMode === 'numbering') {
+                const pattern = ($('#rename-base-name')?.value || '').trim() || 'Element';
+                const digits = Number($('#rename-counter-digits')?.value || 2);
+                const start = Number($('#rename-start-num')?.value || 1);
+                const num = String(start + index).padStart(digits, '0');
+                return `${pattern}_${num}${ext}`;
+            }
+
+            if (activeMode === 'replace') {
+                const search = $('#rename-search-str')?.value || '';
+                const replace = $('#rename-replace-str')?.value || '';
+                const caseSensitive = $('#rename-case-sensitive')?.checked;
+                if (!search) return originalName;
+
+                let newBase = base;
+                if (caseSensitive) {
+                    newBase = base.split(search).join(replace);
+                } else {
+                    const reg = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+                    newBase = base.replace(reg, replace);
+                }
+                return `${newBase}${ext}`;
+            }
+
+            if (activeMode === 'affix') {
+                const prefix = $('#rename-prefix-str')?.value || '';
+                const suffix = $('#rename-suffix-str')?.value || '';
+                return `${prefix}${base}${suffix}${ext}`;
+            }
+
+            if (activeMode === 'case') {
+                const c = $('#rename-case-select')?.value;
+                let newBase = base;
+                if (c === 'lower') newBase = base.toLowerCase();
+                else if (c === 'upper') newBase = base.toUpperCase();
+                else if (c === 'title') newBase = base.replace(/\b\w/g, (l) => l.toUpperCase());
+                return `${newBase}${ext}`;
+            }
+
+            return originalName;
+        }
+
+        function updatePreview() {
+            const tbody = $('#rename-preview-tbody');
+            if (!tbody) return;
+
+            const seen = new Set();
+            let hasDuplicates = false;
+
+            tbody.innerHTML = items.map((it, idx) => {
+                const newName = computeNewName(it.name, idx, it.type === 'folder');
+                const isDup = seen.has(newName.toLowerCase());
+                seen.add(newName.toLowerCase());
+                if (isDup) hasDuplicates = true;
+
+                return `
+                    <tr>
+                        <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(it.name)}">
+                            ${it.type === 'folder' ? '📁' : fileIcon(it)} ${esc(it.name)}
+                        </td>
+                        <td class="rename-arrow">→</td>
+                        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:${isDup ? '#ef4444' : 'var(--text)'}" title="${esc(newName)}">
+                            ${esc(newName)} ${isDup ? '<span title="Namenskollision!">⚠️</span>' : ''}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            const warnEl = $('#rename-conflict-warning');
+            const submitBtn = $('#btn-submit-batch-rename');
+            if (warnEl) warnEl.textContent = hasDuplicates ? '⚠️ Achtung: Mehrere Dateien erhalten denselben Namen!' : '';
+            if (submitBtn) submitBtn.disabled = hasDuplicates;
+        }
+
+        ['rename-base-name', 'rename-counter-digits', 'rename-start-num',
+         'rename-search-str', 'rename-replace-str', 'rename-case-sensitive',
+         'rename-prefix-str', 'rename-suffix-str', 'rename-case-select'].forEach((id) => {
+            const el = $(`#${id}`);
+            el?.addEventListener('input', updatePreview);
+            el?.addEventListener('change', updatePreview);
+        });
+
+        if (items.length > 0) {
+            const f = items[0];
+            const dot = f.name.lastIndexOf('.');
+            const base = (f.type !== 'folder' && dot > 0) ? f.name.substring(0, dot) : f.name;
+            const clean = base.replace(/[\d_-]+$/, '');
+            if (clean && $('#rename-base-name')) {
+                $('#rename-base-name').value = clean;
+            }
+        }
+
+        updatePreview();
+
+        $('#btn-submit-batch-rename')?.addEventListener('click', async () => {
+            const renames = items.map((it, idx) => ({
+                type: it.type,
+                id: it.id,
+                name: computeNewName(it.name, idx, it.type === 'folder'),
+            }));
+
+            try {
+                toast('Benenne Elemente um…');
+                const res = await apiPost('batch_rename', { renames });
+                closeModal();
+                toast(`${res.renamed} Elemente erfolgreich umbenannt!`);
+                state.selected.clear();
+                updateBulkToolbar();
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+    }
+
+    // Client-side Image Optimizer Modal (WebP, Resize & Compression)
+    async function openImageOptimizeModal(file) {
+        const streamUrl = `api.php?action=download&id=${file.id}&inline=1`;
+
+        openModal(`🗜️ Bild optimieren – ${esc(file.name)}`, `
+            <div style="display:flex;flex-direction:column;gap:0.75rem">
+                <!-- Settings Toolbar -->
+                <div style="display:flex;flex-wrap:wrap;gap:0.75rem;padding:0.6rem 0.85rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;align-items:center;justify-content:space-between">
+                    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                        <label style="font-size:0.82rem;font-weight:600;color:var(--text-muted)">Format:</label>
+                        <select id="opt-format-select" class="input input-sm" style="width:auto">
+                            <option value="image/webp" selected>WebP (Klein & modern)</option>
+                            <option value="image/jpeg">JPEG (Standard)</option>
+                            <option value="image/png">PNG (Verlustfrei)</option>
+                        </select>
+
+                        <label style="font-size:0.82rem;font-weight:600;color:var(--text-muted);margin-left:0.5rem">Max. Breite:</label>
+                        <select id="opt-res-select" class="input input-sm" style="width:auto">
+                            <option value="0" selected>Originalgröße</option>
+                            <option value="2560">2K (2560 px)</option>
+                            <option value="1920">Full HD (1920 px)</option>
+                            <option value="1280">Web / HD (1280 px)</option>
+                            <option value="800">Thumbnail (800 px)</option>
+                        </select>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:0.5rem" id="opt-quality-wrap">
+                        <label style="font-size:0.82rem;font-weight:600;color:var(--text-muted)">Qualität:</label>
+                        <input type="range" id="opt-quality-slider" min="10" max="100" value="82" style="width:110px">
+                        <span id="opt-quality-val" style="font-size:0.82rem;font-weight:700;min-width:32px">82%</span>
+                    </div>
+                </div>
+
+                <!-- Preview & Savings Comparison -->
+                <div class="optimize-compare-wrap">
+                    <div class="optimize-preview-box">
+                        <div style="font-size:0.75rem;font-weight:600;color:var(--text-muted);margin-bottom:0.35rem">
+                            Original: <strong>${formatBytes(file.size_bytes)}</strong>
+                        </div>
+                        <img id="opt-orig-img" src="${streamUrl}" alt="Original">
+                    </div>
+                    <div class="optimize-preview-box">
+                        <div style="font-size:0.75rem;font-weight:600;margin-bottom:0.35rem;display:flex;align-items:center;gap:0.4rem">
+                            <span>Neu: <strong id="opt-new-size">Berechne…</strong></span>
+                            <span id="opt-savings-pill" class="savings-pill hidden">-0%</span>
+                        </div>
+                        <img id="opt-preview-img" alt="Optimiert">
+                    </div>
+                </div>
+
+                <!-- Action Footer -->
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;padding-top:0.4rem;border-top:1px solid var(--border)">
+                    <button type="button" class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+                    <div style="display:flex;gap:0.4rem">
+                        <button type="button" class="btn btn-ghost" id="btn-opt-replace">Original ersetzen</button>
+                        <button type="button" class="btn btn-primary" id="btn-opt-save-new">Als neue Datei speichern</button>
+                    </div>
+                </div>
+            </div>
+        `, true);
+
+        const formatSelect = $('#opt-format-select');
+        const resSelect = $('#opt-res-select');
+        const qualitySlider = $('#opt-quality-slider');
+        const qualityVal = $('#opt-quality-val');
+        const qualityWrap = $('#opt-quality-wrap');
+        const newSizeLbl = $('#opt-new-size');
+        const savingsPill = $('#opt-savings-pill');
+        const previewImg = $('#opt-preview-img');
+        const btnSaveNew = $('#btn-opt-save-new');
+        const btnReplace = $('#btn-opt-replace');
+
+        let currentBlob = null;
+        let loadedImg = new Image();
+        loadedImg.crossOrigin = 'anonymous';
+
+        toast('Lade Bild für Optimierung…');
+        loadedImg.src = streamUrl;
+
+        await new Promise((resolve) => {
+            loadedImg.onload = resolve;
+            loadedImg.onerror = () => {
+                toast('Bild konnte nicht geladen werden.', 'error');
+                resolve();
+            };
+        });
+
+        async function processImage() {
+            if (!loadedImg.naturalWidth) return;
+
+            const format = formatSelect?.value || 'image/webp';
+            const quality = Number(qualitySlider?.value || 82) / 100;
+            const maxW = Number(resSelect?.value || 0);
+
+            if (qualityWrap) qualityWrap.style.display = format === 'image/png' ? 'none' : 'flex';
+
+            let targetW = loadedImg.naturalWidth;
+            let targetH = loadedImg.naturalHeight;
+
+            if (maxW > 0 && targetW > maxW) {
+                targetH = Math.round((maxW / targetW) * targetH);
+                targetW = maxW;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(loadedImg, 0, 0, targetW, targetH);
+
+            currentBlob = await new Promise((res) => canvas.toBlob(res, format, quality));
+            if (!currentBlob) return;
+
+            const newUrl = URL.createObjectURL(currentBlob);
+            if (previewImg) previewImg.src = newUrl;
+
+            if (newSizeLbl) newSizeLbl.textContent = formatBytes(currentBlob.size);
+
+            const origSize = file.size_bytes;
+            const newSize = currentBlob.size;
+            const savings = origSize > 0 ? Math.round(((origSize - newSize) / origSize) * 100) : 0;
+
+            if (savingsPill) {
+                savingsPill.classList.remove('hidden');
+                if (savings > 0) {
+                    savingsPill.textContent = `-${savings}% kleiner!`;
+                    savingsPill.style.background = 'rgba(16, 185, 129, 0.15)';
+                    savingsPill.style.color = '#10b981';
+                } else {
+                    savingsPill.textContent = `+${Math.abs(savings)}%`;
+                    savingsPill.style.background = 'rgba(239, 68, 68, 0.15)';
+                    savingsPill.style.color = '#ef4444';
+                }
+            }
+        }
+
+        formatSelect?.addEventListener('change', processImage);
+        resSelect?.addEventListener('change', processImage);
+        qualitySlider?.addEventListener('input', () => {
+            if (qualityVal) qualityVal.textContent = `${qualitySlider.value}%`;
+            processImage();
+        });
+
+        await processImage();
+
+        function getTargetExtension(mime) {
+            if (mime === 'image/webp') return '.webp';
+            if (mime === 'image/jpeg') return '.jpg';
+            if (mime === 'image/png') return '.png';
+            return '.webp';
+        }
+
+        async function saveOptimized(replace = false) {
+            if (!currentBlob) return;
+
+            const format = formatSelect?.value || 'image/webp';
+            const ext = getTargetExtension(format);
+
+            let targetName = file.name;
+            if (!replace) {
+                const dot = file.name.lastIndexOf('.');
+                const base = dot > 0 ? file.name.substring(0, dot) : file.name;
+                targetName = `${base}_opt${ext}`;
+            } else if (!targetName.toLowerCase().endsWith(ext)) {
+                const dot = targetName.lastIndexOf('.');
+                const base = dot > 0 ? targetName.substring(0, dot) : targetName;
+                targetName = `${base}${ext}`;
+            }
+
+            const newFile = new File([currentBlob], targetName, { type: format });
+            closeModal();
+            toast(`Lade optimiertes Bild hoch: „${targetName}“…`);
+            await uploadFileEntries([{ file: newFile }], state.currentFolderId);
+        }
+
+        btnSaveNew?.addEventListener('click', () => saveOptimized(false));
+        btnReplace?.addEventListener('click', () => {
+            if (confirm(`Möchten Sie das Original „${file.name}“ wirklich durch die optimierte Version ersetzen? (Das Original wird automatisch als Revision archiviert).`)) {
+                saveOptimized(true);
+            }
+        });
+    }
+
+    // Storage Radar Modal (Cumulative folder sizes & category breakdown)
+    async function openStorageAnalysisModal() {
+        openModal('📊 Speicherplatz-Radar', `
+            <div id="storage-radar-loading" style="text-align:center;padding:2rem">
+                <span class="spinner"></span> Analysiere Speicherbelegung…
+            </div>
+            <div id="storage-radar-content" class="hidden"></div>
+        `, true);
+
+        try {
+            const res = await apiGet({ action: 'storage_analysis' });
+            const data = res.data;
+            const loadEl = $('#storage-radar-loading');
+            const contEl = $('#storage-radar-content');
+            if (loadEl) loadEl.classList.add('hidden');
+            if (!contEl) return;
+            contEl.classList.remove('hidden');
+
+            const totalBytes = data.total_bytes || 0;
+            const categories = data.categories || [];
+            const largestFolders = data.largest_folders || [];
+            const largestFiles = data.largest_files || [];
+
+            const meterSegments = categories.map((c) => `
+                <div class="storage-segment" style="width:${c.percent}%;background:${c.color}" title="${c.name}: ${formatBytes(c.bytes)} (${c.percent}%)"></div>
+            `).join('');
+
+            const legendHtml = categories.map((c) => `
+                <div class="radar-legend-item">
+                    <span class="radar-legend-dot" style="background:${c.color}"></span>
+                    <span>${c.icon} <strong>${esc(c.name)}</strong>: ${formatBytes(c.bytes)} <span class="muted small">(${c.percent}%)</span></span>
+                </div>
+            `).join('');
+
+            const folderRows = largestFolders.map((f, idx) => `
+                <tr style="cursor:pointer" data-radar-folder="${f.id}" title="Zu diesem Ordner navigieren">
+                    <td style="width:28px"><span class="radar-rank-badge">${idx + 1}</span></td>
+                    <td>
+                        <div>📁 <strong>${esc(f.name)}</strong></div>
+                        <div class="muted small">${esc(f.path)}</div>
+                    </td>
+                    <td style="text-align:right;white-space:nowrap">
+                        <strong>${formatBytes(f.bytes)}</strong>
+                        <div class="muted small">${f.percent}%</div>
+                    </td>
+                </tr>
+            `).join('');
+
+            const fileRows = largestFiles.map((fl, idx) => `
+                <tr style="cursor:pointer" data-radar-file="${fl.id}" title="Datei öffnen / Vorschau">
+                    <td style="width:28px"><span class="radar-rank-badge">${idx + 1}</span></td>
+                    <td>
+                        <div>${fileIcon(fl)} <strong>${esc(fl.name)}</strong></div>
+                        <div class="muted small">in ${esc(fl.folder_name)}</div>
+                    </td>
+                    <td style="text-align:right;white-space:nowrap">
+                        <strong>${formatBytes(fl.size_bytes)}</strong>
+                    </td>
+                </tr>
+            `).join('');
+
+            contEl.innerHTML = `
+                <!-- Total Header -->
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;padding:0.6rem 0.85rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px">
+                    <div>
+                        <div class="muted small">Gesamter belegter Speicher:</div>
+                        <div style="font-size:1.4rem;font-weight:700;color:var(--primary)">${formatBytes(totalBytes)}</div>
+                    </div>
+                    <div style="text-align:right" class="muted small">
+                        <div><strong>${data.total_files.toLocaleString('de-DE')}</strong> Dateien</div>
+                        <div><strong>${data.total_folders.toLocaleString('de-DE')}</strong> Ordner</div>
+                    </div>
+                </div>
+
+                <!-- Storage Meter Bar -->
+                <div class="storage-meter">${meterSegments || '<div class="storage-segment" style="width:100%;background:#6b7280"></div>'}</div>
+
+                <!-- Legend -->
+                <div class="radar-legend">${legendHtml}</div>
+
+                <!-- Split Cards: Largest Folders & Largest Files -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem" class="radar-grid-wrap">
+                    <!-- Folders Card -->
+                    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-card)">
+                        <div style="padding:0.45rem 0.75rem;background:var(--bg-secondary);border-bottom:1px solid var(--border);font-size:0.8rem;font-weight:600;display:flex;justify-content:space-between">
+                            <span>📁 Größte Ordner</span>
+                            <span class="muted small">Klick = Öffnen</span>
+                        </div>
+                        <div style="max-height:260px;overflow-y:auto">
+                            <table class="batch-rename-table">
+                                <tbody>${folderRows || '<tr><td colspan="3" class="muted small" style="text-align:center;padding:1rem">Keine Ordner vorhanden.</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Files Card -->
+                    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-card)">
+                        <div style="padding:0.45rem 0.75rem;background:var(--bg-secondary);border-bottom:1px solid var(--border);font-size:0.8rem;font-weight:600;display:flex;justify-content:space-between">
+                            <span>📄 Größte Dateien</span>
+                            <span class="muted small">Klick = Vorschau</span>
+                        </div>
+                        <div style="max-height:260px;overflow-y:auto">
+                            <table class="batch-rename-table">
+                                <tbody>${fileRows || '<tr><td colspan="3" class="muted small" style="text-align:center;padding:1rem">Keine Dateien vorhanden.</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            $$('[data-radar-folder]', contEl).forEach((row) => {
+                row.addEventListener('click', () => {
+                    const fid = Number(row.dataset.radarFolder);
+                    closeModal();
+                    state.view = 'files';
+                    state.currentFolderId = fid;
+                    state.search = '';
+                    $('#search-input').value = '';
+                    setActiveNavView('files');
+                    loadCurrentView();
+                });
+            });
+
+            $$('[data-radar-file]', contEl).forEach((row) => {
+                row.addEventListener('click', () => {
+                    const flId = Number(row.dataset.radarFile);
+                    const flObj = largestFiles.find((f) => f.id === flId);
+                    if (flObj) {
+                        closeModal();
+                        openFileModal(flObj);
+                    }
+                });
+            });
+
+        } catch (err) {
+            toast(`Fehler beim Laden des Radars: ${err.message}`, 'error');
+            closeModal();
+        }
     }
 
     // ZIP Inspector & Extractor Modal

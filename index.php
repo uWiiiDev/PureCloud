@@ -238,9 +238,9 @@ $bootData = [
 
             <!-- Quota & User Footer -->
             <div class="sidebar-footer">
-                <div class="quota-box">
+                <div class="quota-box" id="btn-quota-radar" style="cursor:pointer" title="Speicherplatz-Radar analysieren">
                     <div class="quota-labels">
-                        <span>Speicherplatz</span>
+                        <span>Speicherplatz 📊</span>
                         <span id="quota-text">0 B / ∞</span>
                     </div>
                     <div class="quota-bar">
@@ -293,6 +293,7 @@ $bootData = [
                 </div>
 
                 <div class="view-mode-toggle">
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-storage-radar" title="Speicherplatz-Radar analysieren">📊</button>
                     <button type="button" class="btn btn-ghost btn-sm active" id="btn-layout-list" title="Listenansicht">☰</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-layout-grid" title="Kachelansicht">⊞</button>
                     <button type="button" class="btn btn-ghost btn-sm hide-mobile" id="btn-layout-split" title="Zweifenstermodus (Split-View)">◫</button>
@@ -316,6 +317,7 @@ $bootData = [
                     <span id="bulk-count" class="bulk-count">0 ausgewählt</span>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-copy" title="Auswahl kopieren">📋 Kopieren</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-cut" title="Auswahl ausschneiden">✂️ Ausschneiden</button>
+                    <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-rename" title="Auswahl umbenennen">🏷️ Umbenennen</button>
                     <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-bulk-merge-pdf" title="Ausgewählte PDFs zusammenführen">📄 PDFs zusammenführen</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-download">📦 ZIP</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-trash">🗑️ Löschen</button>

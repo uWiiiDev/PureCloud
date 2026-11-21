@@ -339,6 +339,11 @@ try {
             );
             jsonResponse(['ok' => true]);
 
+        case 'batch_rename':
+            $renames = is_array($input['renames'] ?? null) ? $input['renames'] : [];
+            $res = FileManager::batchRename($userId, $renames);
+            jsonResponse(['ok' => true, 'renamed' => $res['renamed']]);
+
         case 'move':
             $items    = is_array($input['items'] ?? null) ? $input['items'] : [];
             $targetId = isset($input['target_folder_id']) && $input['target_folder_id'] !== '' && $input['target_folder_id'] !== null
@@ -795,6 +800,12 @@ try {
                 'ok'     => true,
                 'url'    => $url,
                 'qr_svg' => $svg,
+            ]);
+
+        case 'storage_analysis':
+            jsonResponse([
+                'ok'   => true,
+                'data' => FileManager::getStorageAnalysis($userId),
             ]);
 
         case 'admin_find_duplicates':
