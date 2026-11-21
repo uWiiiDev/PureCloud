@@ -13,6 +13,9 @@ Fokussierte, extrem schnelle und zu **100 % autarke** selbstgehostete Datei-Clou
    - **Selektiver Rückgängig-Verlauf (`↩️`):** Jede Datei-Aktion (Verschieben, Kopieren, Umbenennen, Löschen, Neuer Ordner) lässt sich über das Verlaufs-Dropdown auch unabhängig von der Chronologie einzeln rückgängig machen.
    - **Chunked-Upload (2-MB-Blöcke):** Problemloser Upload beliebig großer Dateien sowie ganzer Ordnerstrukturen per Drag & Drop (selbst bei strikten Shared-Hosting-Limits).
    - **Vorschau & Editor:** Direkte Browser-Vorschau für Bilder (inkl. automatischer 240×240 WebP/JPEG-Thumbnails), Video/Audio (`HTTP 206 Partial Content` Streaming), PDF sowie integrierter Text-/Markdown-/Code-Editor.
+   - **Farb-Tags (`🎨`) & Dateinotizen (`📝`):** 6 dezente Farbmarkierungen (Rot, Orange, Gelb, Grün, Blau, Lila) und individuelle Dateinotizen per Kontextmenü, direkt filterbar über die Filterleiste.
+   - **Revisionsverlauf / Dateiversionierung (`🕒`):** Bis zu 10 Vorversionen pro Datei automatisch archiviert (beim Überschreiben oder Speichern im Editor), mit 1-Klick-Download oder Wiederherstellung.
+   - **Upload-Konflikt-Behandlung (`⚠️`):** Bei Namenskonflikten wahlweise *Überschreiben* (sichert bisherige Version), *Beide behalten* (automatische Nummerierung) oder *Überspringen*.
    - **ZIP-Werkzeuge:** ZIP-Archive im Browser inspizieren, direkt auf dem Server entpacken (inkl. Zip-Slip-, Symlink- & ZIP-Bomben-Schutz) oder beliebige Ordner/Dateien als `.zip` herunterladen.
 
 2. **🔒 AES-256-GCM Zero-Knowledge Tresor (Dateien & ganze Ordner)**

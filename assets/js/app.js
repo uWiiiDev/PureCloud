@@ -900,16 +900,24 @@
 
     function filterLabel(ft) {
         switch (ft) {
-            case 'favorite':  return '⭐ Favoriten';
-            case 'folder':    return '📁 Ordner';
-            case 'doc':       return '📄 Dokumente';
-            case 'image':     return '🖼️ Bilder';
-            case 'video':     return '🎬 Videos';
-            case 'audio':     return '🎵 Audio';
-            case 'zip':       return '📦 ZIP';
-            case 'encrypted': return '🔒 Tresor';
-            case 'shared':    return '🔗 Geteilt';
-            default:          return 'Filter';
+            case 'favorite':   return '⭐ Favoriten';
+            case 'has_tag':    return '🎨 Mit Tag';
+            case 'tag_red':    return '🔴 Tag: Rot';
+            case 'tag_orange': return '🟠 Tag: Orange';
+            case 'tag_yellow': return '🟡 Tag: Gelb';
+            case 'tag_green':  return '🟢 Tag: Grün';
+            case 'tag_blue':   return '🔵 Tag: Blau';
+            case 'tag_purple': return '🟣 Tag: Lila';
+            case 'has_note':   return '📝 Mit Notiz';
+            case 'folder':     return '📁 Ordner';
+            case 'doc':        return '📄 Dokumente';
+            case 'image':      return '🖼️ Bilder';
+            case 'video':      return '🎬 Videos';
+            case 'audio':      return '🎵 Audio';
+            case 'zip':        return '📦 ZIP';
+            case 'encrypted':  return '🔒 Tresor';
+            case 'shared':     return '🔗 Geteilt';
+            default:           return 'Filter';
         }
     }
 
@@ -938,6 +946,9 @@
             }
             if (ft === 'all') return true;
             if (ft === 'favorite') return Boolean(it.is_favorite);
+            if (ft === 'has_tag') return Boolean(it.color_tag);
+            if (ft.startsWith('tag_')) return it.color_tag === ft.slice(4);
+            if (ft === 'has_note') return Boolean(it.notes && it.notes.trim() !== '');
             if (ft === 'folder') return it.type === 'folder';
             if (ft === 'encrypted') return Boolean(it.is_encrypted || it.encrypted_count > 0);
             if (ft === 'shared') return Boolean(it.share_count > 0 || it.group_name);
@@ -1305,16 +1316,24 @@
         const arrow = (col) => state.sortBy === col ? `<span class="th-sort-arrow">${state.sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
         const isFiltered = hasActiveFilter();
         const filterOpts = [
-            { id: 'all',       label: '✦ Alle Typen' },
-            { id: 'favorite',  label: '⭐ Nur Favoriten' },
-            { id: 'folder',    label: '📁 Nur Ordner' },
-            { id: 'doc',       label: '📄 Dokumente & PDF' },
-            { id: 'image',     label: '🖼️ Bilder' },
-            { id: 'video',     label: '🎬 Videos' },
-            { id: 'audio',     label: '🎵 Audio' },
-            { id: 'zip',       label: '📦 ZIP-Archive' },
-            { id: 'encrypted', label: '🔒 Verschlüsselt (Tresor)' },
-            { id: 'shared',    label: '🔗 Geteilt / Gruppenordner' },
+            { id: 'all',        label: '✦ Alle Typen' },
+            { id: 'favorite',   label: '⭐ Nur Favoriten' },
+            { id: 'has_tag',    label: '🎨 Mit Farb-Tag' },
+            { id: 'tag_red',    label: '🔴 Tag: Rot' },
+            { id: 'tag_orange', label: '🟠 Tag: Orange' },
+            { id: 'tag_yellow', label: '🟡 Tag: Gelb' },
+            { id: 'tag_green',  label: '🟢 Tag: Grün' },
+            { id: 'tag_blue',   label: '🔵 Tag: Blau' },
+            { id: 'tag_purple', label: '🟣 Tag: Lila' },
+            { id: 'has_note',   label: '📝 Mit Notiz' },
+            { id: 'folder',     label: '📁 Nur Ordner' },
+            { id: 'doc',        label: '📄 Dokumente & PDF' },
+            { id: 'image',      label: '🖼️ Bilder' },
+            { id: 'video',      label: '🎬 Videos' },
+            { id: 'audio',      label: '🎵 Audio' },
+            { id: 'zip',        label: '📦 ZIP-Archive' },
+            { id: 'encrypted',  label: '🔒 Verschlüsselt (Tresor)' },
+            { id: 'shared',     label: '🔗 Geteilt / Gruppenordner' },
         ];
         const filterMenuHtml = `
             <div style="padding:0.25rem 0.25rem 0.45rem;border-bottom:1px solid var(--border);margin-bottom:0.25rem">
@@ -1408,7 +1427,10 @@
                                     : `<div class="item-icon">${isFolder ? '📁' : fileIcon(item)}</div>`
                                 }
                                 <div class="item-name-wrap">
+                                    ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(item.color_tag)}"></span>` : ''}
                                     <span class="item-name">${esc(item.name)}</span>
+                                    ${item.version_count > 0 ? `<span class="item-version-badge" data-action="versions" title="Revisionsverlauf (${item.version_count} Vorversionen)">v${item.version_count + 1}</span>` : ''}
+                                    ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
                                     ${badges}
                                 </div>
                             </div>
@@ -1527,9 +1549,14 @@
                             : `<span>${isFolder ? '📁' : fileIcon(item)}</span>`
                         }
                     </div>
-                    <div class="grid-title" data-open="${key}" title="${esc(item.name)}">${esc(item.name)}</div>
+                    <div class="grid-title" data-open="${key}" title="${esc(item.name)}">
+                        ${item.color_tag ? `<span class="color-tag-dot color-${esc(item.color_tag)}" title="Tag: ${esc(item.color_tag)}"></span>` : ''}
+                        <span>${esc(item.name)}</span>
+                        ${item.notes ? `<span class="item-note-icon" data-action="note" title="Notiz: ${esc(item.notes)}">📝</span>` : ''}
+                    </div>
                     <div class="grid-meta">
                         <span>${isFolder ? 'Ordner' : formatBytes(item.size_bytes)}</span>
+                        ${item.version_count > 0 ? `<span class="item-version-badge" data-action="versions" title="Revisionsverlauf (${item.version_count} Vorversionen)">v${item.version_count + 1}</span>` : ''}
                     </div>
                 </div>
             `;
@@ -1698,6 +1725,31 @@
             }
             itemsHtml += `<div class="dropdown-divider"></div>`;
 
+            if (['owner', 'write'].includes(state.permission) && !item.is_group_folder) {
+                itemsHtml += `
+                    <div class="color-picker-bar">
+                        <span class="muted small" style="margin-right:auto">Tag:</span>
+                        <button type="button" class="color-dot-btn btn-clear-color" data-color="" title="Keine Markierung">✕</button>
+                        <button type="button" class="color-dot-btn" data-color="red" style="background:#ef4444" title="Rot"></button>
+                        <button type="button" class="color-dot-btn" data-color="orange" style="background:#f97316" title="Orange"></button>
+                        <button type="button" class="color-dot-btn" data-color="yellow" style="background:#eab308" title="Gelb"></button>
+                        <button type="button" class="color-dot-btn" data-color="green" style="background:#22c55e" title="Grün"></button>
+                        <button type="button" class="color-dot-btn" data-color="blue" style="background:#3b82f6" title="Blau"></button>
+                        <button type="button" class="color-dot-btn" data-color="purple" style="background:#a855f7" title="Lila"></button>
+                    </div>
+                    <button type="button" class="dropdown-item" data-ctx-act="notes">
+                        📝 ${item.notes ? 'Notiz bearbeiten' : 'Notiz hinzufügen'}
+                    </button>
+                `;
+            }
+            if (!isFolder) {
+                itemsHtml += `
+                    <button type="button" class="dropdown-item" data-ctx-act="versions">
+                        🕒 Revisionsverlauf ${item.version_count > 0 ? `(${item.version_count + 1})` : ''}
+                    </button>
+                `;
+            }
+
             if (state.permission === 'owner' || item.is_group_folder || state.isGroupTree) {
                 itemsHtml += `
                     <button type="button" class="dropdown-item" data-ctx-act="share">
@@ -1751,6 +1803,24 @@
         const y = Math.min(clientY, Math.max(12, window.innerHeight - rect.height - 12));
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
+
+        $$('.color-dot-btn', menu).forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                closeContextMenu();
+                const col = btn.dataset.color || null;
+                try {
+                    await apiPost('set_color_tag', {
+                        items: targetItems.map((x) => ({ type: x.type, id: x.id })),
+                        color: col,
+                    });
+                    toast(col ? 'Farb-Tag zugewiesen.' : 'Farb-Tag entfernt.');
+                    loadCurrentView();
+                } catch (err) {
+                    toast(err.message, 'error');
+                }
+            });
+        });
 
         $$('[data-ctx-act]', menu).forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -2138,6 +2208,20 @@
                 const key = el.dataset.open;
                 const item = itemMap.get(key);
                 if (!item) return;
+
+                const noteBtn = e.target.closest('[data-action="note"]');
+                if (noteBtn) {
+                    e.stopPropagation();
+                    openNotesModal(item);
+                    return;
+                }
+                const verBtn = e.target.closest('[data-action="versions"]');
+                if (verBtn) {
+                    e.stopPropagation();
+                    openVersionsModal(item);
+                    return;
+                }
+
                 if (state.view === 'trash') {
                     openContextMenu(item, e.clientX || 120, e.clientY || 120);
                     return;
@@ -2295,6 +2379,14 @@
 
             case 'share':
                 openShareModal(item);
+                break;
+
+            case 'notes':
+                openNotesModal(item);
+                break;
+
+            case 'versions':
+                openVersionsModal(item);
                 break;
         }
     }
@@ -2504,6 +2596,174 @@
         });
     }
 
+    // Notes Modal (Files and Folders)
+    function openNotesModal(item) {
+        openModal(`📝 Notiz für „${esc(item.name)}“`, `
+            <div style="display:flex;flex-direction:column;gap:0.75rem">
+                <p class="muted small" style="margin:0">
+                    Fügen Sie eine Notiz oder Beschreibung hinzu. Diese wird mit einem 📝-Symbol direkt neben dem Namen angezeigt.
+                </p>
+                <textarea id="modal-notes-textarea" class="input" rows="5" placeholder="Notiz hier eingeben…" style="resize:vertical;font-family:inherit">${esc(item.notes || '')}</textarea>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.4rem">
+                    ${item.notes ? `<button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-delete-note">Notiz entfernen</button>` : '<span></span>'}
+                    <div style="display:flex;gap:0.5rem">
+                        <button type="button" class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+                        <button type="button" class="btn btn-primary" id="btn-save-note">Speichern</button>
+                    </div>
+                </div>
+            </div>
+        `);
+
+        setTimeout(() => {
+            const ta = $('#modal-notes-textarea');
+            if (ta) {
+                ta.focus();
+                ta.setSelectionRange(ta.value.length, ta.value.length);
+            }
+        }, 60);
+
+        $('#btn-save-note')?.addEventListener('click', async () => {
+            const notes = ($('#modal-notes-textarea')?.value || '').trim();
+            try {
+                await apiPost('set_notes', {
+                    type: item.type,
+                    id: item.id,
+                    notes: notes,
+                });
+                closeModal();
+                toast(notes ? 'Notiz gespeichert.' : 'Notiz entfernt.');
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+
+        $('#btn-delete-note')?.addEventListener('click', async () => {
+            try {
+                await apiPost('set_notes', {
+                    type: item.type,
+                    id: item.id,
+                    notes: '',
+                });
+                closeModal();
+                toast('Notiz entfernt.');
+                loadCurrentView();
+            } catch (err) {
+                toast(err.message, 'error');
+            }
+        });
+    }
+
+    // File Versions Modal
+    async function openVersionsModal(item) {
+        openModal(`🕒 Revisionsverlauf – „${esc(item.name)}“`, `
+            <div style="text-align:center;padding:1.5rem" id="versions-loading">
+                <span class="spinner"></span> Lade Revisionsverlauf…
+            </div>
+            <div id="versions-content" class="hidden"></div>
+        `);
+
+        try {
+            const res = await apiGet({ action: 'file_versions', file_id: item.id });
+            const data = res.data;
+            const versions = data.versions || [];
+
+            const loading = $('#versions-loading');
+            const content = $('#versions-content');
+            if (loading) loading.classList.add('hidden');
+            if (!content) return;
+            content.classList.remove('hidden');
+
+            let html = `
+                <div style="margin-bottom:0.85rem">
+                    <div class="version-list-item is-current">
+                        <div>
+                            <strong>Aktuelle Version</strong>
+                            <div class="muted small">
+                                📅 ${esc((data.current_date || '').replace('T', ' ').slice(0, 16))} · 📦 ${formatBytes(data.current_size)}
+                                ${data.current_sha ? `· <span title="SHA-256: ${esc(data.current_sha)}">🔒 ${esc(data.current_sha.slice(0, 8))}…</span>` : ''}
+                            </div>
+                        </div>
+                        <span class="badge" style="background:var(--primary);color:#fff">Aktiv</span>
+                    </div>
+                </div>
+            `;
+
+            if (versions.length === 0) {
+                html += `
+                    <p class="muted small" style="text-align:center;padding:1rem 0">
+                        Noch keine früheren Versionen vorhanden.<br>
+                        Sobald die Datei überschrieben oder im Editor gespeichert wird, entsteht hier automatisch ein Revisionsverlauf (bis zu 10 Versionen).
+                    </p>
+                `;
+            } else {
+                html += `<div style="font-size:0.82rem;font-weight:600;margin-bottom:0.45rem;color:var(--text-muted)">Frühere Versionen (${versions.length}):</div>`;
+                html += `<div style="display:flex;flex-direction:column;gap:0.45rem;max-height:260px;overflow-y:auto">`;
+                for (const ver of versions) {
+                    html += `
+                        <div class="version-list-item">
+                            <div>
+                                <strong>Version ${ver.version_num}</strong>
+                                <div class="muted small">
+                                    📅 ${esc((ver.created_at || '').replace('T', ' ').slice(0, 16))} · 📦 ${formatBytes(ver.size_bytes)}
+                                    ${ver.sha256 ? `· <span title="SHA-256: ${esc(ver.sha256)}">🔒 ${esc(ver.sha256.slice(0, 8))}…</span>` : ''}
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:0.35rem">
+                                <a href="api.php?action=download_version&version_id=${ver.id}" class="btn btn-ghost btn-sm" title="Version herunterladen" download>
+                                    ⬇️
+                                </a>
+                                <button type="button" class="btn btn-ghost btn-sm" data-restore-ver="${ver.id}" title="Diese Version als aktuelle Datei wiederherstellen">
+                                    ♻️
+                                </button>
+                                <button type="button" class="btn btn-ghost btn-sm text-danger" data-delete-ver="${ver.id}" title="Diese Version löschen">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            }
+
+            content.innerHTML = html;
+
+            $$('[data-restore-ver]', content).forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const vid = btn.dataset.restoreVer;
+                    if (!confirm('Möchten Sie diese ältere Version wirklich wiederherstellen? Die aktuelle Datei wird als neue Vorversion gesichert.')) return;
+                    try {
+                        await apiPost('restore_version', { version_id: Number(vid) });
+                        closeModal();
+                        toast('Version erfolgreich wiederhergestellt.');
+                        loadCurrentView();
+                    } catch (err) {
+                        toast(err.message, 'error');
+                    }
+                });
+            });
+
+            $$('[data-delete-ver]', content).forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const vid = btn.dataset.deleteVer;
+                    if (!confirm('Diese Version endgültig löschen?')) return;
+                    try {
+                        await apiPost('delete_version', { version_id: Number(vid) });
+                        toast('Version gelöscht.');
+                        openVersionsModal(item);
+                        loadCurrentView();
+                    } catch (err) {
+                        toast(err.message, 'error');
+                    }
+                });
+            });
+
+        } catch (err) {
+            toast(err.message, 'error');
+            closeModal();
+        }
+    }
+
     // Create / Edit Text File Modal
     $('#btn-new-text')?.addEventListener('click', () => {
         openTextEditorModal(null, 'notiz.md', '');
@@ -2591,19 +2851,52 @@
             `;
         }
 
+        const noteBox = file.notes ? `
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:4px;padding:0.5rem 0.75rem;margin:0.75rem 0;font-size:0.84rem;display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">
+                <div>
+                    <div style="font-weight:600;font-size:0.75rem;color:var(--text-muted);margin-bottom:0.15rem">📝 Notiz:</div>
+                    <div style="white-space:pre-wrap">${esc(file.notes)}</div>
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-edit-note" title="Notiz bearbeiten">✏️</button>
+            </div>
+        ` : '';
+
         openModal(file.name, `
             ${previewHtml}
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem">
-                <span class="muted small">${formatBytes(file.size_bytes)} · ${esc(file.mime_type)}</span>
-                <div style="display:flex;gap:0.5rem">
-                    <button type="button" class="btn btn-ghost" id="modal-btn-vault">🔒 Verschlüsseln</button>
-                    <a class="btn btn-primary" href="${dlUrl}">⬇️ Herunterladen</a>
+            ${noteBox}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap;gap:0.5rem">
+                <div class="muted small" style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+                    <span>${formatBytes(file.size_bytes)} · ${esc(file.mime_type)}</span>
+                    ${file.color_tag ? `<span class="color-tag-dot color-${esc(file.color_tag)}" title="Tag: ${esc(file.color_tag)}"></span>` : ''}
+                    ${file.sha256 ? `<span class="muted" style="cursor:pointer" id="btn-copy-sha" title="SHA-256 in die Zwischenablage kopieren (Klick)">🔒 ${esc(file.sha256.slice(0, 10))}…</span>` : ''}
+                </div>
+                <div style="display:flex;gap:0.35rem;align-items:center">
+                    <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-note">📝 ${file.notes ? 'Notiz' : '+ Notiz'}</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-versions">🕒 Versionen ${file.version_count > 0 ? `(${file.version_count + 1})` : ''}</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="modal-btn-vault">🔒 Verschlüsseln</button>
+                    <a class="btn btn-primary btn-sm" href="${dlUrl}">⬇️ Herunterladen</a>
                 </div>
             </div>
         `, file.category === 'pdf' || file.category === 'image' || file.category === 'video');
 
         $('#modal-btn-vault')?.addEventListener('click', () => {
             openVaultModal(file);
+        });
+        $('#modal-btn-note')?.addEventListener('click', () => {
+            openNotesModal(file);
+        });
+        $('#modal-btn-edit-note')?.addEventListener('click', () => {
+            openNotesModal(file);
+        });
+        $('#modal-btn-versions')?.addEventListener('click', () => {
+            openVersionsModal(file);
+        });
+        $('#btn-copy-sha')?.addEventListener('click', () => {
+            if (file.sha256) {
+                navigator.clipboard?.writeText(file.sha256).then(() => {
+                    toast('SHA-256 Prüfsumme in die Zwischenablage kopiert.');
+                });
+            }
         });
     }
 
@@ -3278,9 +3571,119 @@
         }));
     }
 
+    function promptUploadConflictResolution(conflicts) {
+        return new Promise((resolve) => {
+            const count = conflicts.length;
+            const title = count === 1 ? '⚠️ Datei existiert bereits' : `⚠️ ${count} Dateien existieren bereits`;
+            const listHtml = conflicts.map((c) => `<li style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${esc(c)}</li>`).join('');
+
+            openModal(title, `
+                <div style="display:flex;flex-direction:column;gap:0.75rem">
+                    <p class="muted small" style="margin:0">
+                        Im Zielordner sind bereits ${count === 1 ? 'eine Datei' : `${count} Dateien`} mit gleichem Namen vorhanden:
+                    </p>
+                    <ul style="max-height:130px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:0.5rem 1rem;margin:0;list-style:none;font-size:0.84rem;display:flex;flex-direction:column;gap:0.25rem">
+                        ${listHtml}
+                    </ul>
+                    <p class="small muted" style="margin:0">
+                        Wie möchten Sie mit vorhandenen Dateien verfahren?
+                    </p>
+                    <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.35rem">
+                        <button type="button" class="btn btn-primary" id="btn-conflict-overwrite" style="justify-content:flex-start">
+                            🔄 <strong>Überschreiben</strong>
+                            <span class="muted small" style="margin-left:auto;color:rgba(255,255,255,0.75)">Sichert bisherige Versionen in der Historie</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="btn-conflict-keep-both" style="justify-content:flex-start;border:1px solid var(--border)">
+                            📋 <strong>Beide behalten</strong>
+                            <span class="muted small" style="margin-left:auto">Benennt neu hochgeladene Dateien um</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="btn-conflict-skip" style="justify-content:flex-start;border:1px solid var(--border)">
+                            ⏭️ <strong>Überspringen</strong>
+                            <span class="muted small" style="margin-left:auto">Lädt nur neue Dateien hoch</span>
+                        </button>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;margin-top:0.4rem">
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-conflict-cancel">Upload abbrechen</button>
+                    </div>
+                </div>
+            `);
+
+            $('#btn-conflict-overwrite')?.addEventListener('click', () => { closeModal(); resolve('overwrite'); });
+            $('#btn-conflict-keep-both')?.addEventListener('click', () => { closeModal(); resolve('keep_both'); });
+            $('#btn-conflict-skip')?.addEventListener('click', () => { closeModal(); resolve('skip'); });
+            $('#btn-conflict-cancel')?.addEventListener('click', () => { closeModal(); resolve('cancel'); });
+            $('#modal-close-btn')?.addEventListener('click', () => { resolve('cancel'); });
+        });
+    }
+
+    function renameConflictingFile(originalFile, existingNames) {
+        const full = originalFile.name;
+        const lastDot = full.lastIndexOf('.');
+        const base = lastDot > 0 ? full.slice(0, lastDot) : full;
+        const ext = lastDot > 0 ? full.slice(lastDot) : '';
+
+        let index = 1;
+        let newName = `${base} (${index})${ext}`;
+        while (existingNames.includes(newName)) {
+            index++;
+            newName = `${base} (${index})${ext}`;
+        }
+        existingNames.push(newName);
+
+        try {
+            return new File([originalFile], newName, { type: originalFile.type });
+        } catch (_) {
+            return {
+                ...originalFile,
+                name: newName,
+                slice: (...args) => originalFile.slice(...args),
+                size: originalFile.size,
+                type: originalFile.type,
+            };
+        }
+    }
+
     async function uploadFileEntries(entries, targetFolderId) {
         hideDropOverlay();
         if (!entries || entries.length === 0) return;
+
+        // Check for upload conflicts on root-level files in target folder
+        const flatNames = entries
+            .filter((e) => !e.relativePath || !e.relativePath.includes('/'))
+            .map((e) => e.file.name);
+
+        if (flatNames.length > 0) {
+            try {
+                const confRes = await apiPost('check_upload_conflicts', {
+                    folder_id: targetFolderId,
+                    file_names: flatNames,
+                    _skip_undo: true,
+                });
+                const conflicts = confRes.conflicts || [];
+                if (conflicts.length > 0) {
+                    const resolution = await promptUploadConflictResolution(conflicts);
+                    if (resolution === 'cancel') {
+                        return;
+                    } else if (resolution === 'skip') {
+                        entries = entries.filter((e) => !conflicts.includes(e.file.name));
+                        if (entries.length === 0) {
+                            toast('Dateien wurden übersprungen.');
+                            return;
+                        }
+                    } else if (resolution === 'keep_both') {
+                        const existingPool = [...conflicts];
+                        for (const entry of entries) {
+                            if (conflicts.includes(entry.file.name)) {
+                                entry.file = renameConflictingFile(entry.file, existingPool);
+                            }
+                        }
+                    }
+                    // 'overwrite' proceeds as-is (and backend automatically archives the old version!)
+                }
+            } catch (err) {
+                console.warn('Conflict check failed, proceeding with normal upload:', err);
+            }
+        }
 
         const panel = $('#upload-progress-panel');
         const statusLbl = $('#upload-status-label');

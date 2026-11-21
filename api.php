@@ -233,6 +233,11 @@ try {
 
             FileManager::streamPhysicalFile($path, $file['name'], $file['mime_type'], $inline);
 
+        case 'download_version':
+            $versionId = (int)($_GET['version_id'] ?? $input['version_id'] ?? 0);
+            FileManager::downloadFileVersion($userId, $versionId);
+            exit;
+
         case 'read_text':
             $fileId = (int)($_GET['id'] ?? 0);
             $access = FileManager::resolveFileAccess($userId, $fileId);
@@ -281,6 +286,40 @@ try {
             }
             $isFav = FileManager::toggleFavorite($userId, $type, $itemId);
             jsonResponse(['ok' => true, 'is_favorite' => $isFav]);
+
+        case 'set_color_tag':
+            $items = is_array($input['items'] ?? null) ? $input['items'] : [];
+            $color = isset($input['color']) && $input['color'] !== '' ? (string)$input['color'] : null;
+            $count = FileManager::setColorTag($userId, $items, $color);
+            jsonResponse(['ok' => true, 'count' => $count]);
+
+        case 'set_notes':
+            $type = (string)($input['type'] ?? '');
+            $id   = (int)($input['id'] ?? 0);
+            $notes = (string)($input['notes'] ?? '');
+            FileManager::setNotes($userId, $type, $id, $notes);
+            jsonResponse(['ok' => true]);
+
+        case 'file_versions':
+            $fileId = (int)($_GET['file_id'] ?? $input['file_id'] ?? 0);
+            $data   = FileManager::getFileVersions($userId, $fileId);
+            jsonResponse(['ok' => true, 'data' => $data]);
+
+        case 'restore_version':
+            $versionId = (int)($input['version_id'] ?? 0);
+            $restored  = FileManager::restoreFileVersion($userId, $versionId);
+            jsonResponse(['ok' => true, 'restored' => $restored]);
+
+        case 'delete_version':
+            $versionId = (int)($input['version_id'] ?? 0);
+            FileManager::deleteFileVersion($userId, $versionId);
+            jsonResponse(['ok' => true]);
+
+        case 'check_upload_conflicts':
+            $folderId  = isset($input['folder_id']) && $input['folder_id'] !== '' && $input['folder_id'] !== null ? (int)$input['folder_id'] : null;
+            $fileNames = is_array($input['file_names'] ?? null) ? $input['file_names'] : [];
+            $conflicts = FileManager::checkUploadConflicts($userId, $folderId, $fileNames);
+            jsonResponse(['ok' => true, 'conflicts' => $conflicts]);
 
         case 'rename':
             FileManager::renameItem(

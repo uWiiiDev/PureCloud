@@ -221,6 +221,19 @@ class Database
             );
 
             CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
+
+            CREATE TABLE IF NOT EXISTS file_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                version_num INTEGER NOT NULL DEFAULT 1,
+                storage_name TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                sha256 TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_file_versions_file ON file_versions(file_id, created_at);
         ");
 
         // Auto-migrate 2FA columns on existing users table
@@ -244,13 +257,31 @@ class Database
             }
         }
 
-        // Auto-migrate is_group_folder column on existing folders table
+        // Auto-migrate color_tag and notes columns on existing files table
+        $fileCols = [];
+        foreach ($pdo->query("PRAGMA table_info(files)")->fetchAll() as $col) {
+            $fileCols[$col['name']] = true;
+        }
+        if (!isset($fileCols['color_tag'])) {
+            $pdo->exec("ALTER TABLE files ADD COLUMN color_tag TEXT NULL");
+        }
+        if (!isset($fileCols['notes'])) {
+            $pdo->exec("ALTER TABLE files ADD COLUMN notes TEXT NULL");
+        }
+
+        // Auto-migrate is_group_folder, color_tag, and notes columns on existing folders table
         $folderCols = [];
         foreach ($pdo->query("PRAGMA table_info(folders)")->fetchAll() as $col) {
             $folderCols[$col['name']] = true;
         }
         if (!isset($folderCols['is_group_folder'])) {
             $pdo->exec("ALTER TABLE folders ADD COLUMN is_group_folder INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($folderCols['color_tag'])) {
+            $pdo->exec("ALTER TABLE folders ADD COLUMN color_tag TEXT NULL");
+        }
+        if (!isset($folderCols['notes'])) {
+            $pdo->exec("ALTER TABLE folders ADD COLUMN notes TEXT NULL");
         }
 
         if ($isNew) {

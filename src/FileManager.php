@@ -182,7 +182,7 @@ class FileManager
 
         if ($view === 'favorites') {
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) AS share_count,
                        (SELECT COUNT(*) FROM files fl WHERE fl.folder_id = f.id AND fl.is_encrypted = 1 AND fl.deleted_at IS NULL) AS encrypted_count,
                        1 AS is_favorite
@@ -195,8 +195,9 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes, fl.created_at, fl.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) AS share_count,
+                       (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        1 AS is_favorite
                 FROM favorites fav
                 JOIN files fl ON fl.id = fav.item_id AND fav.item_type = 'file'
@@ -218,7 +219,7 @@ class FileManager
 
         if ($view === 'trash') {
             $fStmt = $pdo->prepare('
-                SELECT id, name, parent_id, deleted_at, created_at, updated_at
+                SELECT id, name, parent_id, color_tag, notes, deleted_at, created_at, updated_at
                 FROM folders
                 WHERE owner_id = :uid AND deleted_at IS NOT NULL
                 ORDER BY deleted_at DESC, name COLLATE NOCASE ASC
@@ -227,7 +228,9 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare('
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, deleted_at, created_at, updated_at
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                       (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
+                       deleted_at, created_at, updated_at
                 FROM files
                 WHERE owner_id = :uid AND deleted_at IS NOT NULL
                 ORDER BY deleted_at DESC, name COLLATE NOCASE ASC
@@ -247,7 +250,9 @@ class FileManager
 
         if ($view === 'vault') {
             $fileStmt = $pdo->prepare('
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, deleted_at, created_at, updated_at
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                       (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
+                       deleted_at, created_at, updated_at
                 FROM files
                 WHERE owner_id = :uid AND is_encrypted = 1 AND deleted_at IS NULL
                 ORDER BY name COLLATE NOCASE ASC
@@ -268,14 +273,14 @@ class FileManager
         if ($view === 'shared' && $folderId === null) {
             // Top-level items shared with $userId directly or via group_shares
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.created_at, f.updated_at,
                        s.permission AS shared_permission, u.display_name AS owner_name, NULL AS group_name
                 FROM user_shares s
                 JOIN folders f ON f.id = s.item_id AND s.item_type = 'folder'
                 JOIN users u ON u.id = f.owner_id
                 WHERE s.target_user_id = :uid AND f.deleted_at IS NULL
                 UNION ALL
-                SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.color_tag, f.notes, f.created_at, f.updated_at,
                        gs.permission AS shared_permission, u.display_name AS owner_name, g.name AS group_name
                 FROM group_shares gs
                 JOIN group_members gm ON gm.group_id = gs.target_group_id
@@ -289,14 +294,16 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                       fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        s.permission AS shared_permission, u.display_name AS owner_name
                 FROM user_shares s
                 JOIN files fl ON fl.id = s.item_id AND s.item_type = 'file'
                 JOIN users u ON u.id = fl.owner_id
                 WHERE s.target_user_id = :uid AND fl.deleted_at IS NULL
                 UNION ALL
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                       fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        gs.permission AS shared_permission, u.display_name AS owner_name
                 FROM group_shares gs
                 JOIN group_members gm ON gm.group_id = gs.target_group_id
@@ -322,7 +329,7 @@ class FileManager
         if ($search !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
             $fStmt = $pdo->prepare("
-                SELECT id, name, parent_id, created_at, updated_at
+                SELECT id, name, parent_id, color_tag, notes, created_at, updated_at
                 FROM folders
                 WHERE owner_id = :uid AND deleted_at IS NULL AND name LIKE :q ESCAPE '\\'
                 ORDER BY name COLLATE NOCASE ASC
@@ -332,7 +339,9 @@ class FileManager
             $folders = $fStmt->fetchAll();
 
             $fileStmt = $pdo->prepare("
-                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, created_at, updated_at
+                SELECT id, folder_id, name, mime_type, size_bytes, sha256, is_encrypted, color_tag, notes,
+                       (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = files.id) AS version_count,
+                       created_at, updated_at
                 FROM files
                 WHERE owner_id = :uid AND deleted_at IS NULL AND name LIKE :q ESCAPE '\\'
                 ORDER BY name COLLATE NOCASE ASC
@@ -354,7 +363,7 @@ class FileManager
         // Virtual "Gruppenordner" container directory ($folderId === -1)
         if ($folderId === -1) {
             $gfStmt = $pdo->prepare("
-                SELECT f.id, f.name, -1 AS parent_id, f.is_group_folder, f.created_at, f.updated_at,
+                SELECT f.id, f.name, -1 AS parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) AS share_count,
                        (SELECT COUNT(*) FROM files fl WHERE fl.folder_id = f.id AND fl.is_encrypted = 1 AND fl.deleted_at IS NULL) AS encrypted_count,
                        GROUP_CONCAT(g.name, ', ') AS group_name
@@ -428,7 +437,7 @@ class FileManager
         if ($folderId === null) {
             // Own personal root folders
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'folder' AND us.item_id = f.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'folder' AND gsc.item_id = f.id) AS share_count,
@@ -459,6 +468,8 @@ class FileManager
                     'parent_id'         => null,
                     'is_group_folder'   => true,
                     'is_group_root'     => true,
+                    'color_tag'         => null,
+                    'notes'             => null,
                     'share_count'       => 0,
                     'encrypted_count'   => 0,
                     'group_name'        => $gfCount . ' Ordner',
@@ -471,7 +482,8 @@ class FileManager
             }
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                       fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'file' AND us.item_id = fl.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'file' AND gsc.item_id = fl.id) AS share_count
@@ -482,7 +494,7 @@ class FileManager
             $fileStmt->execute([':uid' => $effectiveOwnerId]);
         } else {
             $fStmt = $pdo->prepare("
-                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.created_at, f.updated_at,
+                SELECT f.id, f.name, f.parent_id, f.is_group_folder, f.color_tag, f.notes, f.created_at, f.updated_at,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'folder' AND ps.item_id = f.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'folder' AND us.item_id = f.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'folder' AND gsc.item_id = f.id) AS share_count,
@@ -496,7 +508,8 @@ class FileManager
             $formattedFolders = self::formatFolders($fStmt->fetchAll(), $favFolders);
 
             $fileStmt = $pdo->prepare("
-                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.created_at, fl.updated_at,
+                SELECT fl.id, fl.folder_id, fl.name, fl.mime_type, fl.size_bytes, fl.sha256, fl.is_encrypted, fl.color_tag, fl.notes,
+                       fl.created_at, fl.updated_at, (SELECT COUNT(*) FROM file_versions fv WHERE fv.file_id = fl.id) AS version_count,
                        (SELECT COUNT(*) FROM public_shares ps WHERE ps.item_type = 'file' AND ps.item_id = fl.id) +
                        (SELECT COUNT(*) FROM user_shares us WHERE us.item_type = 'file' AND us.item_id = fl.id) +
                        (SELECT COUNT(*) FROM group_shares gsc WHERE gsc.item_type = 'file' AND gsc.item_id = fl.id) AS share_count
@@ -535,6 +548,8 @@ class FileManager
                 'parent_id'         => isset($r['parent_id']) && $r['parent_id'] !== null ? (int)$r['parent_id'] : null,
                 'is_group_folder'   => (int)($r['is_group_folder'] ?? 0) === 1,
                 'is_favorite'       => !empty($favFolders[$fid]) || !empty($r['is_favorite']),
+                'color_tag'         => $r['color_tag'] ?? null,
+                'notes'             => $r['notes'] ?? null,
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'encrypted_count'   => (int)($r['encrypted_count'] ?? 0),
                 'group_name'        => $r['group_name'] ?? null,
@@ -562,8 +577,12 @@ class FileManager
                 'ext'               => $ext,
                 'mime_type'         => $r['mime_type'],
                 'size_bytes'        => (int)$r['size_bytes'],
+                'sha256'            => $r['sha256'] ?? '',
                 'is_encrypted'      => (int)$r['is_encrypted'] === 1,
                 'is_favorite'       => !empty($favFiles[$fid]) || !empty($r['is_favorite']),
+                'color_tag'         => $r['color_tag'] ?? null,
+                'notes'             => $r['notes'] ?? null,
+                'version_count'     => (int)($r['version_count'] ?? 0),
                 'share_count'       => (int)($r['share_count'] ?? 0),
                 'shared_permission' => $r['shared_permission'] ?? null,
                 'owner_name'        => $r['owner_name'] ?? null,
@@ -1032,6 +1051,7 @@ class FileManager
                 $stmt->execute([':id' => $id, ':uid' => $userId]);
                 $file = $stmt->fetch();
                 if ($file) {
+                    self::purgeFileVersions($pdo, $id);
                     self::unlinkPhysicalFile($file['storage_name']);
                     $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $id]);
                     $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $id]);
@@ -1058,10 +1078,12 @@ class FileManager
         $flStmt = $pdo->prepare('SELECT id, storage_name FROM files WHERE owner_id = :uid AND deleted_at IS NOT NULL');
         $flStmt->execute([':uid' => $userId]);
         foreach ($flStmt->fetchAll() as $fl) {
+            $fId = (int)$fl['id'];
+            self::purgeFileVersions($pdo, $fId);
             self::unlinkPhysicalFile($fl['storage_name']);
-            $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => (int)$fl['id']]);
-            $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => (int)$fl['id']]);
-            $pdo->prepare('DELETE FROM files WHERE id = :id')->execute([':id' => (int)$fl['id']]);
+            $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare('DELETE FROM files WHERE id = :id')->execute([':id' => $fId]);
             $count++;
         }
         return $count;
@@ -1078,10 +1100,12 @@ class FileManager
         $flStmt = $pdo->prepare('SELECT id, storage_name FROM files WHERE folder_id = :fid');
         $flStmt->execute([':fid' => $folderId]);
         foreach ($flStmt->fetchAll() as $fl) {
+            $fId = (int)$fl['id'];
+            self::purgeFileVersions($pdo, $fId);
             self::unlinkPhysicalFile($fl['storage_name']);
-            $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => (int)$fl['id']]);
-            $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => (int)$fl['id']]);
-            $pdo->prepare("DELETE FROM group_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => (int)$fl['id']]);
+            $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare("DELETE FROM user_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
+            $pdo->prepare("DELETE FROM group_shares WHERE item_type = 'file' AND item_id = :id")->execute([':id' => $fId]);
         }
         $pdo->prepare('DELETE FROM files WHERE folder_id = :fid')->execute([':fid' => $folderId]);
         $pdo->prepare("DELETE FROM public_shares WHERE item_type = 'folder' AND item_id = :id")->execute([':id' => $folderId]);
@@ -1202,25 +1226,30 @@ class FileManager
         $existing = $chk->fetch();
 
         if ($existing) {
-            $storageName = $existing['storage_name'];
+            $existingId = (int)$existing['id'];
+            // Archive existing file version into history
+            self::archiveFileVersion($existingId, $existing['storage_name'], (int)$existing['size_bytes'], $existing['sha256'] ?? '');
+            self::purgeThumbnail($existing['storage_name']);
+
+            $storageName = bin2hex(random_bytes(16));
             $destPath    = Database::FILES_DIR . '/' . $storageName;
-            self::purgeThumbnail($storageName);
             if (!rename($sourceFilePath, $destPath)) {
                 copy($sourceFilePath, $destPath);
                 @unlink($sourceFilePath);
             }
             $upd = $pdo->prepare("
                 UPDATE files
-                SET mime_type = :mime, size_bytes = :size, sha256 = :sha, is_encrypted = 0, updated_at = datetime('now')
+                SET storage_name = :sname, mime_type = :mime, size_bytes = :size, sha256 = :sha, is_encrypted = 0, updated_at = datetime('now')
                 WHERE id = :id
             ");
             $upd->execute([
-                ':mime' => $mimeType,
-                ':size' => $actualSize,
-                ':sha'  => $sha256,
-                ':id'   => (int)$existing['id'],
+                ':sname' => $storageName,
+                ':mime'  => $mimeType,
+                ':size'  => $actualSize,
+                ':sha'   => $sha256,
+                ':id'    => $existingId,
             ]);
-            $fileId = (int)$existing['id'];
+            $fileId = $existingId;
         } else {
             $storageName = bin2hex(random_bytes(16));
             $destPath    = Database::FILES_DIR . '/' . $storageName;
@@ -1306,15 +1335,19 @@ class FileManager
             if ($diffBytes > 0 && !Auth::canFitBytes($ownerId, $diffBytes)) {
                 throw new RuntimeException('Speicherplatz-Quota überschritten.');
             }
-            $filePath = Database::FILES_DIR . '/' . basename($file['storage_name']);
+            // Archive current version into history
+            self::archiveFileVersion($fileId, $file['storage_name'], (int)$file['size_bytes'], $file['sha256'] ?? '');
+
+            $newStorageName = bin2hex(random_bytes(16));
+            $filePath = Database::FILES_DIR . '/' . $newStorageName;
             if (file_put_contents($filePath, $content, LOCK_EX) === false) {
                 throw new RuntimeException('Datei konnte nicht gespeichert werden.');
             }
             $newSize = strlen($content);
             $sha256  = hash('sha256', $content);
             $pdo = Database::get();
-            $pdo->prepare("UPDATE files SET size_bytes = :s, sha256 = :sha, updated_at = datetime('now') WHERE id = :id")
-                ->execute([':s' => $newSize, ':sha' => $sha256, ':id' => $fileId]);
+            $pdo->prepare("UPDATE files SET storage_name = :sname, size_bytes = :s, sha256 = :sha, updated_at = datetime('now') WHERE id = :id")
+                ->execute([':sname' => $newStorageName, ':s' => $newSize, ':sha' => $sha256, ':id' => $fileId]);
             return ['id' => $fileId, 'name' => $file['name'], 'size_bytes' => $newSize];
         }
 
@@ -1892,5 +1925,277 @@ class FileManager
             $ins->execute([':uid' => $userId, ':type' => $itemType, ':id' => $itemId]);
             return true;
         }
+    }
+
+    public static function archiveFileVersion(int $fileId, string $oldStorageName, int $oldSize, string $oldSha): void
+    {
+        $oldStorageName = basename($oldStorageName);
+        if ($oldStorageName === '' || $oldSize <= 0 || !is_file(Database::FILES_DIR . '/' . $oldStorageName)) {
+            return;
+        }
+
+        $pdo = Database::get();
+        $vStmt = $pdo->prepare('SELECT COALESCE(MAX(version_num), 0) + 1 FROM file_versions WHERE file_id = :fid');
+        $vStmt->execute([':fid' => $fileId]);
+        $nextVer = (int)$vStmt->fetchColumn();
+
+        $ins = $pdo->prepare('
+            INSERT INTO file_versions (file_id, version_num, storage_name, size_bytes, sha256, created_at)
+            VALUES (:fid, :vnum, :sname, :sz, :sha, datetime("now"))
+        ');
+        $ins->execute([
+            ':fid'   => $fileId,
+            ':vnum'  => $nextVer,
+            ':sname' => $oldStorageName,
+            ':sz'    => $oldSize,
+            ':sha'   => $oldSha,
+        ]);
+
+        // Keep at most 10 past versions per file
+        $cntStmt = $pdo->prepare('SELECT id, storage_name FROM file_versions WHERE file_id = :fid ORDER BY version_num ASC');
+        $cntStmt->execute([':fid' => $fileId]);
+        $allVers = $cntStmt->fetchAll();
+        if (count($allVers) > 10) {
+            $toDelete = array_slice($allVers, 0, count($allVers) - 10);
+            foreach ($toDelete as $oldV) {
+                self::unlinkPhysicalFile($oldV['storage_name']);
+                $pdo->prepare('DELETE FROM file_versions WHERE id = :id')->execute([':id' => $oldV['id']]);
+            }
+        }
+    }
+
+    public static function purgeFileVersions(PDO $pdo, int $fileId): void
+    {
+        $stmt = $pdo->prepare('SELECT storage_name FROM file_versions WHERE file_id = :fid');
+        $stmt->execute([':fid' => $fileId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $sn) {
+            self::unlinkPhysicalFile($sn);
+        }
+        $pdo->prepare('DELETE FROM file_versions WHERE file_id = :fid')->execute([':fid' => $fileId]);
+    }
+
+    public static function getFileVersions(int $userId, int $fileId): array
+    {
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access) {
+            throw new RuntimeException('Keine Berechtigung für diese Datei.');
+        }
+        $file = $access['file'];
+        $pdo = Database::get();
+
+        $stmt = $pdo->prepare('
+            SELECT id, version_num, size_bytes, sha256, created_at
+            FROM file_versions
+            WHERE file_id = :fid
+            ORDER BY version_num DESC
+        ');
+        $stmt->execute([':fid' => $fileId]);
+        $versions = $stmt->fetchAll();
+
+        return [
+            'file_id'      => $fileId,
+            'name'         => $file['name'],
+            'current_size' => (int)$file['size_bytes'],
+            'current_date' => $file['updated_at'],
+            'current_sha'  => $file['sha256'] ?? '',
+            'versions'     => $versions,
+        ];
+    }
+
+    public static function downloadFileVersion(int $userId, int $versionId): void
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT v.*, f.name, f.owner_id, f.is_encrypted, f.mime_type FROM file_versions v JOIN files f ON f.id = v.file_id WHERE v.id = :vid LIMIT 1');
+        $stmt->execute([':vid' => $versionId]);
+        $ver = $stmt->fetch();
+        if (!$ver) {
+            http_response_code(404);
+            exit('Version nicht gefunden.');
+        }
+
+        $access = self::resolveFileAccess($userId, (int)$ver['file_id']);
+        if (!$access) {
+            http_response_code(403);
+            exit('Keine Berechtigung.');
+        }
+
+        $path = Database::FILES_DIR . '/' . basename($ver['storage_name']);
+        if (!is_file($path)) {
+            http_response_code(404);
+            exit('Datei nicht auf dem Speicher gefunden.');
+        }
+
+        $ext = pathinfo($ver['name'], PATHINFO_EXTENSION);
+        $baseName = pathinfo($ver['name'], PATHINFO_FILENAME);
+        $dlName = $baseName . '_v' . $ver['version_num'] . ($ext !== '' ? '.' . $ext : '');
+
+        header('Content-Type: ' . ($ver['mime_type'] ?: 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . rawurlencode($dlName) . '"; filename*=UTF-8\'\'' . rawurlencode($dlName));
+        header('Content-Length: ' . (string)filesize($path));
+        header('Cache-Control: private, no-transform, no-store, must-revalidate');
+        readfile($path);
+        exit;
+    }
+
+    public static function restoreFileVersion(int $userId, int $versionId): array
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT v.*, f.name, f.owner_id, f.storage_name AS current_storage, f.size_bytes AS current_size, f.sha256 AS current_sha FROM file_versions v JOIN files f ON f.id = v.file_id WHERE v.id = :vid LIMIT 1');
+        $stmt->execute([':vid' => $versionId]);
+        $ver = $stmt->fetch();
+        if (!$ver) {
+            throw new RuntimeException('Version nicht gefunden.');
+        }
+
+        $fileId = (int)$ver['file_id'];
+        $access = self::resolveFileAccess($userId, $fileId);
+        if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+            throw new RuntimeException('Keine Schreibberechtigung für diese Datei.');
+        }
+
+        $vPath = Database::FILES_DIR . '/' . basename($ver['storage_name']);
+        if (!is_file($vPath)) {
+            throw new RuntimeException('Versionsdatei existiert nicht mehr.');
+        }
+
+        // Archive current active file as a new version
+        self::archiveFileVersion($fileId, $ver['current_storage'], (int)$ver['current_size'], $ver['current_sha'] ?? '');
+
+        // Generate a new storage name for the restored file and copy from version
+        $ext = strtolower(pathinfo($ver['name'], PATHINFO_EXTENSION));
+        $newStorageName = bin2hex(random_bytes(16)) . ($ext !== '' ? '.' . $ext : '');
+        $newPath = Database::FILES_DIR . '/' . $newStorageName;
+        if (!copy($vPath, $newPath)) {
+            throw new RuntimeException('Wiederherstellung fehlgeschlagen.');
+        }
+
+        $newSize = (int)filesize($newPath);
+        $newSha  = hash_file('sha256', $newPath) ?: '';
+        $mime    = self::detectMimeType($newPath, $ver['name']);
+
+        $upd = $pdo->prepare("
+            UPDATE files
+            SET storage_name = :sname, size_bytes = :size, sha256 = :sha, mime_type = :mime, is_encrypted = 0, updated_at = datetime('now')
+            WHERE id = :id
+        ");
+        $upd->execute([
+            ':sname' => $newStorageName,
+            ':size'  => $newSize,
+            ':sha'   => $newSha,
+            ':mime'  => $mime,
+            ':id'    => $fileId,
+        ]);
+        self::purgeThumbnail($newStorageName);
+
+        return ['id' => $fileId, 'name' => $ver['name'], 'version_restored' => (int)$ver['version_num']];
+    }
+
+    public static function deleteFileVersion(int $userId, int $versionId): void
+    {
+        $pdo = Database::get();
+        $stmt = $pdo->prepare('SELECT v.*, f.owner_id FROM file_versions v JOIN files f ON f.id = v.file_id WHERE v.id = :vid LIMIT 1');
+        $stmt->execute([':vid' => $versionId]);
+        $ver = $stmt->fetch();
+        if (!$ver) {
+            return;
+        }
+
+        $access = self::resolveFileAccess($userId, (int)$ver['file_id']);
+        if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+            throw new RuntimeException('Keine Berechtigung zum Löschen dieser Version.');
+        }
+
+        self::unlinkPhysicalFile($ver['storage_name']);
+        $pdo->prepare('DELETE FROM file_versions WHERE id = :vid')->execute([':vid' => $versionId]);
+    }
+
+    public static function setColorTag(int $userId, array $items, ?string $color): int
+    {
+        $allowedColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple'];
+        $cleanColor = ($color !== null && in_array(strtolower($color), $allowedColors, true)) ? strtolower($color) : null;
+
+        $pdo = Database::get();
+        $count = 0;
+        foreach ($items as $item) {
+            $type = $item['type'] ?? '';
+            $id   = (int)($item['id'] ?? 0);
+            if ($id <= 0) continue;
+
+            if ($type === 'folder') {
+                $access = self::resolveFolderAccess($userId, $id);
+                if ($access && in_array($access['permission'], ['owner', 'write'], true)) {
+                    $pdo->prepare('UPDATE folders SET color_tag = :col WHERE id = :id')
+                        ->execute([':col' => $cleanColor, ':id' => $id]);
+                    $count++;
+                }
+            } elseif ($type === 'file') {
+                $access = self::resolveFileAccess($userId, $id);
+                if ($access && in_array($access['permission'], ['owner', 'write'], true)) {
+                    $pdo->prepare('UPDATE files SET color_tag = :col WHERE id = :id')
+                        ->execute([':col' => $cleanColor, ':id' => $id]);
+                    $count++;
+                }
+            }
+        }
+        return $count;
+    }
+
+    public static function setNotes(int $userId, string $type, int $id, string $rawNotes): void
+    {
+        $cleanNotes = trim($rawNotes);
+        if (mb_strlen($cleanNotes) > 5000) {
+            $cleanNotes = mb_substr($cleanNotes, 0, 5000);
+        }
+        $val = $cleanNotes === '' ? null : $cleanNotes;
+
+        $pdo = Database::get();
+        if ($type === 'folder') {
+            $access = self::resolveFolderAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Schreibberechtigung für diesen Ordner.');
+            }
+            $pdo->prepare('UPDATE folders SET notes = :n WHERE id = :id')->execute([':n' => $val, ':id' => $id]);
+        } elseif ($type === 'file') {
+            $access = self::resolveFileAccess($userId, $id);
+            if (!$access || !in_array($access['permission'], ['owner', 'write'], true)) {
+                throw new RuntimeException('Keine Schreibberechtigung für diese Datei.');
+            }
+            $pdo->prepare('UPDATE files SET notes = :n WHERE id = :id')->execute([':n' => $val, ':id' => $id]);
+        }
+    }
+
+    public static function checkUploadConflicts(int $userId, ?int $folderId, array $fileNames): array
+    {
+        if (empty($fileNames)) {
+            return [];
+        }
+
+        $access = self::canWriteFolder($userId, $folderId);
+        $effectiveOwnerId = $access['effective_owner_id'];
+
+        $sanitized = [];
+        foreach ($fileNames as $fn) {
+            $s = self::sanitizeName((string)$fn);
+            if ($s !== '') {
+                $sanitized[] = $s;
+            }
+        }
+        if (empty($sanitized)) {
+            return [];
+        }
+
+        $pdo = Database::get();
+        $placeholders = implode(',', array_fill(0, count($sanitized), '?'));
+        if ($folderId === null) {
+            $sql = "SELECT name FROM files WHERE owner_id = ? AND folder_id IS NULL AND deleted_at IS NULL AND name IN ($placeholders) COLLATE NOCASE";
+            $params = array_merge([$effectiveOwnerId], $sanitized);
+        } else {
+            $sql = "SELECT name FROM files WHERE owner_id = ? AND folder_id = ? AND deleted_at IS NULL AND name IN ($placeholders) COLLATE NOCASE";
+            $params = array_merge([$effectiveOwnerId, $folderId], $sanitized);
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 }
