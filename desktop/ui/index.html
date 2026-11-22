@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PureCloud Desktop Sync</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="logo-badge">☁️</div>
+                <div>
+                    <h1 class="brand-title">PureCloud</h1>
+                    <span class="brand-subtitle">Desktop Sync Client</span>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <div id="status-pill" class="status-pill status-idle">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Bereit</span>
+                </div>
+                <button type="button" class="icon-btn" id="btn-theme-toggle" title="Design umschalten">🌓</button>
+                <button type="button" class="icon-btn" id="btn-open-settings" title="Einstellungen">⚙️</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="app-main">
+            <!-- Setup Wizard View (shown if not configured) -->
+            <section id="view-setup" class="view-panel hidden">
+                <div class="setup-card">
+                    <div class="setup-header">
+                        <h2>👋 Willkommen bei PureCloud</h2>
+                        <p class="muted">Verbinden Sie Ihren Desktop nahtlos mit Ihrer privaten PureCloud-Instanz.</p>
+                    </div>
+
+                    <form id="setup-form" class="form-grid">
+                        <div class="form-group">
+                            <label for="setup-server-url">PureCloud Server-URL</label>
+                            <input type="url" id="setup-server-url" class="input" placeholder="https://cloud.ihre-domain.de" required>
+                            <span class="form-hint">Die Webadresse Ihrer PureCloud-Installation.</span>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label for="setup-username">Benutzername</label>
+                                <input type="text" id="setup-username" class="input" placeholder="z. B. maria" required>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="setup-password">Passwort oder WebDAV-Token</label>
+                                <input type="password" id="setup-password" class="input" placeholder="••••••••••••" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="setup-local-path">Lokaler Synchronisationsordner</label>
+                            <div class="input-with-button">
+                                <input type="text" id="setup-local-path" class="input" placeholder="/home/benutzer/PureCloud" required>
+                            </div>
+                            <span class="form-hint">Alle Dateien in diesem Ordner werden automatisch mit Ihrer Cloud synchronisiert.</span>
+                        </div>
+
+                        <div id="setup-msg" class="alert-box hidden"></div>
+
+                        <div class="setup-actions">
+                            <button type="button" class="btn btn-secondary" id="btn-test-conn">🔌 Verbindung testen</button>
+                            <button type="submit" class="btn btn-primary" id="btn-save-setup">🚀 Jetzt verbinden & synchronisieren</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Active Dashboard View -->
+            <section id="view-dashboard" class="view-panel">
+                <!-- Status Banner -->
+                <div class="dashboard-banner">
+                    <div class="banner-info">
+                        <div class="sync-folder-label">
+                            <span class="muted">Synchronisiere:</span>
+                            <strong id="dash-local-path" class="path-truncate">~/PureCloud</strong>
+                        </div>
+                        <div class="last-sync-label muted" id="dash-last-sync">Letzter Abgleich: Vor wenigen Sekunden</div>
+                    </div>
+
+                    <div class="banner-controls">
+                        <button type="button" class="btn btn-sm btn-primary" id="btn-sync-now">🔄 Jetzt abgleichen</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-pause-toggle">⏸️ Pause</button>
+                        <button type="button" class="btn btn-sm btn-ghost" id="btn-open-folder" title="Im Dateimanager öffnen">📂 Ordner</button>
+                        <button type="button" class="btn btn-sm btn-ghost" id="btn-open-web" title="Im Browser öffnen">🌐 Web-Cloud</button>
+                    </div>
+                </div>
+
+                <!-- Live Progress Card (shown during active transfer) -->
+                <div id="dash-progress-card" class="progress-card hidden">
+                    <div class="progress-header">
+                        <div class="progress-title">
+                            <span class="spinner-small"></span>
+                            <span>Synchronisiere: <strong id="progress-filename">datei.pdf</strong></span>
+                        </div>
+                        <span id="progress-percent" class="progress-badge">45%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="progress-bar-fill" class="progress-fill" style="width: 45%"></div>
+                    </div>
+                </div>
+
+                <!-- Storage Quota Card -->
+                <div class="quota-card">
+                    <div class="quota-header">
+                        <span>Speicherplatzbelegung</span>
+                        <strong id="quota-text">2.4 GB von 20 GB belegt (12%)</strong>
+                    </div>
+                    <div class="quota-track">
+                        <div id="quota-fill" class="quota-fill" style="width: 12%"></div>
+                    </div>
+                </div>
+
+                <!-- Activity Feed -->
+                <div class="activity-section">
+                    <div class="activity-header">
+                        <h3>Synchronisations-Aktivitäten</h3>
+                        <span class="small muted" id="activity-count">0 Vorgänge</span>
+                    </div>
+
+                    <div id="activity-list" class="activity-list">
+                        <div class="empty-state">
+                            <div class="empty-icon">📁</div>
+                            <div>Noch keine Aktivitäten protokolliert.</div>
+                            <div class="small muted">Änderungen an Ihren Dateien werden hier in Echtzeit aufgeführt.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal-backdrop hidden">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <h3>⚙️ PureCloud Einstellungen</h3>
+                    <button type="button" class="close-btn" id="btn-close-settings">✕</button>
+                </div>
+                <form id="settings-form" class="modal-body form-grid">
+                    <div class="form-group">
+                        <label for="cfg-server-url">Server-Adresse</label>
+                        <input type="url" id="cfg-server-url" class="input" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group" style="flex:1">
+                            <label for="cfg-username">Benutzername</label>
+                            <input type="text" id="cfg-username" class="input" required>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label for="cfg-password">Passwort / App-Token</label>
+                            <input type="password" id="cfg-password" class="input" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cfg-local-path">Lokaler Synchronisationsordner</label>
+                        <input type="text" id="cfg-local-path" class="input" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cfg-interval">Abgleich-Intervall (Sekunden)</label>
+                        <input type="number" id="cfg-interval" class="input" min="5" max="3600" value="30">
+                        <span class="form-hint">Echtzeit-Änderungen am Dateisystem werden sofort synchronisiert.</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="cfg-auto-start">
+                            <span>Beim Hochfahren des Systems automatisch starten</span>
+                        </label>
+                    </div>
+
+                    <div id="cfg-msg" class="alert-box hidden"></div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Abbrechen</button>
+                        <button type="submit" class="btn btn-primary">Speichern & Neu verbinden</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

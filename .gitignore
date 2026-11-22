@@ -9,3 +9,6 @@
 /deploy.sh
 /cloud.zip
 .DS_Store
+
+# Desktop Client Build Artifacts
+/desktop/src-tauri/target/

@@ -38,9 +38,10 @@ Fokussierte, extrem schnelle und zu **100 % autarke** selbstgehostete Datei-Clou
    - **30 Tage „Angemeldet bleiben“** über kryptografisch gehashte Selector/Validator-Tokens (`SHA-256`).
    - **Brute-Force-Rate-Limiting**, strikte `Content-Security-Policy` (Sandbox gegen Stored XSS) und eigene **WebDAV-App-Passwörter**.
 
-6. **📡 Native WebDAV-Schnittstelle (`webdav.php`) & PWA**
+6. **📡 Native WebDAV-Schnittstelle (`webdav.php`) & Desktop Sync-Client**
    - Direkt als Netzlaufwerk im Windows Explorer, macOS Finder, unter Linux (`davfs2`/GNOME/KDE) oder auf dem Smartphone einbindbar.
    - Installierbar als **Progressive Web App (PWA)** auf Desktop, Android und iOS.
+   - **🖥️ Eigener Desktop Sync-Client (Tauri 2.0):** Ein nativer, maßgeschneiderter Sync-Client für Linux, Windows und macOS mit System-Tray und Echtzeit-Synchronisation im Ordner [`desktop/`](desktop/).
 
 ---
 

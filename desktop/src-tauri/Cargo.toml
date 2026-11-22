@@ -1,0 +1,33 @@
+[package]
+name = "purecloud-desktop"
+version = "1.0.0"
+description = "PureCloud Desktop Sync Client (Linux, Windows, macOS)"
+authors = ["PureCloud Team"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "purecloud_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["tray-icon"] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+tauri-plugin-fs = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
+notify = "6.1"
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5.0"
+walkdir = "2.5"
+open = "5.1"
+log = "0.4"
+env_logger = "0.11"
