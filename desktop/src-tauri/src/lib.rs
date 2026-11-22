@@ -119,6 +119,19 @@ async fn open_local_folder(app_ctx: State<'_, AppContext>, subpath: Option<Strin
 }
 
 #[tauri::command]
+async fn set_folder_sync_mode(
+    path: String,
+    mode: String,
+    app_ctx: State<'_, AppContext>,
+) -> Result<(), String> {
+    let mut cfg = app_ctx.config.write().await;
+    cfg.folder_rules.insert(path, mode);
+    let _ = cfg.save();
+    let _ = app_ctx.trigger_tx.send(()).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn open_web_url(app_ctx: State<'_, AppContext>) -> Result<(), String> {
     let cfg = app_ctx.config.read().await;
     if !cfg.server_url.is_empty() {
@@ -244,6 +257,7 @@ pub fn run() {
             trigger_sync,
             toggle_pause,
             open_local_folder,
+            set_folder_sync_mode,
             open_web_url
         ])
         .run(tauri::generate_context!())

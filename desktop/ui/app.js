@@ -198,16 +198,57 @@
             return;
         }
 
-        folderListEl.innerHTML = folders.map(f => `
-            <div class="cloud-folder-item">
-                <div class="cloud-folder-left">
-                    <span>📁</span>
-                    <span class="cloud-folder-path" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
-                </div>
-                <button type="button" class="btn btn-sm btn-ghost open-folder-btn" data-subpath="${escapeHtml(f.path)}" title="Diesen Ordner lokal öffnen">📂 Öffnen</button>
-            </div>
-        `).join('');
+        folderListEl.innerHTML = folders.map(f => {
+            const mode = f.sync_mode || 'two_way';
+            const badgeClass =
+                mode === 'two_way' ? 'badge-two-way' :
+                mode === 'download_only' ? 'badge-download-only' :
+                mode === 'upload_only' ? 'badge-upload-only' : 'badge-disabled';
 
+            const badgeText =
+                mode === 'two_way' ? '🔁 2-Wege' :
+                mode === 'download_only' ? '⬇️ Nur Download' :
+                mode === 'upload_only' ? '⬆️ Nur Upload' : '⏸️ Deaktiviert';
+
+            const isLocal = mode !== 'disabled';
+
+            return `
+                <div class="cloud-folder-item ${mode === 'disabled' ? 'folder-item-disabled' : ''}">
+                    <div class="cloud-folder-left">
+                        <span>${mode === 'disabled' ? '☁️' : '📁'}</span>
+                        <div class="folder-title-box">
+                            <span class="cloud-folder-path" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+                            <span class="sync-rule-badge ${badgeClass}">${badgeText}</span>
+                        </div>
+                    </div>
+                    <div class="cloud-folder-right">
+                        <select class="folder-mode-select" data-path="${escapeHtml(f.path)}" title="Synchronisations-Modus für diesen Ordner wählen">
+                            <option value="two_way" ${mode === 'two_way' ? 'selected' : ''}>🔁 Beidseitig (2-Wege)</option>
+                            <option value="download_only" ${mode === 'download_only' ? 'selected' : ''}>⬇️ Nur Download (Cloud → PC)</option>
+                            <option value="upload_only" ${mode === 'upload_only' ? 'selected' : ''}>⬆️ Nur Upload (PC → Cloud)</option>
+                            <option value="disabled" ${mode === 'disabled' ? 'selected' : ''}>⏸️ Deaktiviert (Nur Cloud)</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-ghost open-folder-btn" data-subpath="${escapeHtml(f.path)}" ${!isLocal ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''} title="${isLocal ? 'Diesen Ordner lokal öffnen' : 'Ordner ist lokal deaktiviert'}">📂</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Event listener: Sync mode dropdown change
+        folderListEl.querySelectorAll('.folder-mode-select').forEach(sel => {
+            sel.addEventListener('change', async (e) => {
+                const path = e.target.getAttribute('data-path');
+                const newMode = e.target.value;
+                try {
+                    await invoke('set_folder_sync_mode', { path, mode: newMode });
+                    await refreshStatus();
+                } catch (err) {
+                    console.error('Fehler beim Setzen des Ordner-Modus:', err);
+                }
+            });
+        });
+
+        // Event listener: Open local folder
         folderListEl.querySelectorAll('.open-folder-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const sub = btn.getAttribute('data-subpath');

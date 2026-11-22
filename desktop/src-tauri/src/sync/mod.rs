@@ -140,7 +140,7 @@ impl SyncEngine {
             }
         };
 
-        // Cloud-Ordnerliste im State für die UI aktualisieren
+        // Cloud-Ordnerliste im State für die UI aktualisieren (inklusive aktuellem Sync-Modus)
         {
             let mut s = state.lock().await;
             s.cloud_folders = manifest
@@ -150,6 +150,7 @@ impl SyncEngine {
                     id: f.id,
                     name: f.name.clone(),
                     path: f.path.clone(),
+                    sync_mode: config.get_folder_mode(&f.path),
                 })
                 .collect();
         }
@@ -160,8 +161,13 @@ impl SyncEngine {
         }
 
         // 3. DOWNLOAD-PHASE (Cloud -> Lokal)
-        // 3a. Alle Cloud-Ordner lokal anlegen
+        // 3a. Alle Cloud-Ordner lokal anlegen (sofern Modus Download erlaubt)
         for remote_folder in &manifest.folders {
+            let mode = config.get_folder_mode(&remote_folder.path);
+            if mode == "disabled" || mode == "upload_only" {
+                continue; // Ordner nicht lokal anlegen
+            }
+
             let target_dir = local_root.join(&remote_folder.path);
             if !target_dir.exists() {
                 if let Err(e) = tokio::fs::create_dir_all(&target_dir).await {
@@ -170,9 +176,14 @@ impl SyncEngine {
             }
         }
 
-        // 3b. Cloud-Dateien herunterladen wenn lokal nicht vorhanden oder Dateigröße abweicht
+        // 3b. Cloud-Dateien herunterladen wenn Modus Download erlaubt
         let total_downloads = manifest.files.len();
         for (idx, remote_file) in manifest.files.iter().enumerate() {
+            let mode = config.get_folder_mode(&remote_file.path);
+            if mode == "disabled" || mode == "upload_only" {
+                continue; // Datei überspringen
+            }
+
             let target_file = local_root.join(&remote_file.path);
             let needs_download = if !target_file.exists() {
                 true
@@ -251,6 +262,11 @@ impl SyncEngine {
 
         let total_items = local_items.len();
         for (idx, (abs_path, rel_path, is_dir)) in local_items.into_iter().enumerate() {
+            let mode = config.get_folder_mode(&rel_path);
+            if mode == "disabled" || mode == "download_only" {
+                continue; // Ordner/Datei vom Upload ausschließen
+            }
+
             if is_dir {
                 if !remote_folder_paths.contains(&rel_path) {
                     let _ = api_client.create_remote_folder(&rel_path).await;

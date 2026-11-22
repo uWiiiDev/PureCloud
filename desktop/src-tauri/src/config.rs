@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,6 +14,8 @@ pub struct SyncConfig {
     pub is_paused: bool,
     pub auto_start: bool,
     pub theme: String,
+    #[serde(default)]
+    pub folder_rules: HashMap<String, String>, // path -> "two_way" | "download_only" | "upload_only" | "disabled"
 }
 
 impl Default for SyncConfig {
@@ -30,6 +33,7 @@ impl Default for SyncConfig {
             is_paused: false,
             auto_start: false,
             theme: "dark".to_string(),
+            folder_rules: HashMap::new(),
         }
     }
 }
@@ -74,5 +78,24 @@ impl SyncConfig {
             && !self.username.trim().is_empty()
             && !self.token_or_password.trim().is_empty()
             && !self.local_path.trim().is_empty()
+    }
+
+    pub fn get_folder_mode(&self, rel_path: &str) -> String {
+        let clean = rel_path.trim_matches('/').replace('\\', "/");
+        if clean.is_empty() {
+            return "two_way".to_string();
+        }
+        if let Some(mode) = self.folder_rules.get(&clean) {
+            return mode.clone();
+        }
+        // Prüfen, ob ein Elternordner eine Regel hat (z. B. "Dokumente" für "Dokumente/Rechnungen")
+        let mut current = clean.as_str();
+        while let Some((parent, _)) = current.rsplit_once('/') {
+            if let Some(mode) = self.folder_rules.get(parent) {
+                return mode.clone();
+            }
+            current = parent;
+        }
+        "two_way".to_string()
     }
 }

@@ -42,6 +42,7 @@ pub struct CloudFolderSummary {
     pub id: i64,
     pub name: String,
     pub path: String,
+    pub sync_mode: String, // "two_way", "download_only", "upload_only", "disabled"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
