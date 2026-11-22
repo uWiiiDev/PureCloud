@@ -5892,7 +5892,7 @@
             const content = $('#tpl-content')?.value || '';
             try {
                 closeModal();
-                const res = await apiPost('create_text', {
+                const res = await apiPost('save_text', {
                     folder_id: state.currentFolderId,
                     name: name,
                     content: content,
@@ -6080,7 +6080,7 @@
             stopDictation();
             try {
                 closeModal();
-                await apiPost('create_text', {
+                await apiPost('save_text', {
                     folder_id: state.currentFolderId,
                     name: name,
                     content: text,

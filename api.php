@@ -290,13 +290,18 @@ try {
                 'content'    => $content,
             ]);
 
+        case 'create_text':
         case 'save_text':
             $folderId = isset($input['folder_id']) && $input['folder_id'] !== '' && $input['folder_id'] !== null ? (int)$input['folder_id'] : null;
             $fileId   = isset($input['file_id']) && $input['file_id'] !== '' && $input['file_id'] !== null ? (int)$input['file_id'] : null;
             $name     = (string)($input['name'] ?? '');
             $content  = (string)($input['content'] ?? '');
             $saved    = FileManager::saveTextFile($userId, $folderId, $fileId, $name, $content);
-            jsonResponse(['ok' => true, 'file' => $saved]);
+            jsonResponse([
+                'ok'      => true,
+                'file'    => $saved,
+                'file_id' => $saved['id'] ?? null,
+            ]);
 
         case 'create_folder':
             $parentId = isset($input['parent_id']) && $input['parent_id'] !== '' && $input['parent_id'] !== null ? (int)$input['parent_id'] : null;
