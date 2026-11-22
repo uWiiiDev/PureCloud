@@ -27,16 +27,18 @@ class Auth
         if (session_status() === PHP_SESSION_NONE) {
             @ini_set('session.use_strict_mode', '1');
             @ini_set('session.use_only_cookies', '1');
-            $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-            session_set_cookie_params([
-                'lifetime' => 0,
-                'path'     => '/',
-                'secure'   => $isHttps,
-                'httponly' => true,
-                'samesite' => 'Lax',
-            ]);
-            session_start();
+            if (!headers_sent()) {
+                $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+                @session_set_cookie_params([
+                    'lifetime' => 0,
+                    'path'     => '/',
+                    'secure'   => $isHttps,
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
+            }
+            @session_start();
         }
     }
 
@@ -187,7 +189,9 @@ class Auth
             $rStmt->execute([':th' => $tokenHash, ':now' => time()]);
             $rtRow = $rStmt->fetch();
             if ($rtRow) {
-                session_regenerate_id(true);
+                if (session_status() === PHP_SESSION_ACTIVE) {
+            @session_regenerate_id(true);
+        }
                 $_SESSION['user_id'] = (int)$rtRow['user_id'];
             } else {
                 self::clearRememberToken();
@@ -230,7 +234,9 @@ class Auth
         if ($remember === null) {
             $remember = !empty($_SESSION['pending_2fa_remember']);
         }
-        session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            @session_regenerate_id(true);
+        }
         unset($_SESSION['pending_2fa_user_id'], $_SESSION['pending_2fa_attempts'], $_SESSION['pending_2fa_remember']);
         self::clearRateLimit('login');
         self::clearRateLimit('2fa');

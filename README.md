@@ -54,3 +54,15 @@ Einfach den gesamten Projektinhalt in das gewünschte Webverzeichnis hochladen. 
 chmod +x start.sh
 ./start.sh 8080
 ```
+
+### 🧪 Automatisierte Test-Suite & Systemdiagnose
+PureCloud enthält ein umfassendes, automatisiertes Test-Tool zur Qualitätssicherung:
+* **Im Browser:** Unter `⚙️ Administration` → `🩺 Selbsttest` können sowohl die **System-Infrastruktur** (32 Hardware-/Serverprüfungen) als auch die **E2E Funktions-Test-Suite** (16 echte Benutzer-Workflows in einer isolierten Sandbox) mit einem Klick ausgeführt werden.
+* **Im Terminal (CLI / CI-CD):**
+  ```bash
+  # Farbiger Konsolen-Durchlauf
+  php test_suite.php
+
+  # Maschinenlesbare JSON-Ausgabe (z. B. für Monitoring oder GitHub Actions)
+  php test_suite.php --json
+  ```

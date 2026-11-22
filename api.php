@@ -8,6 +8,7 @@ use Cloud\Auth;
 use Cloud\CryptoVault;
 use Cloud\Database;
 use Cloud\FileManager;
+use Cloud\FunctionalTestSuite;
 use Cloud\SelfTest;
 use Cloud\ShareManager;
 use Cloud\TwoFactor;
@@ -961,6 +962,12 @@ try {
                 throw new RuntimeException('Nur für Administratoren.');
             }
             jsonResponse(['ok' => true, 'report' => SelfTest::runAll($userId)]);
+
+        case 'admin_run_functional_tests':
+            if ($user['role'] !== 'admin') {
+                throw new RuntimeException('Nur für Administratoren.');
+            }
+            jsonResponse(['ok' => true, 'report' => FunctionalTestSuite::run()]);
 
         default:
             jsonResponse(['ok' => false, 'error' => 'Unbekannte Aktion: ' . $action], 400);

@@ -8822,26 +8822,58 @@
                 </div>
 
                 <div id="adm-diagnostics" class="${activeTab === 'adm-diagnostics' ? '' : 'hidden'}">
-                    <div style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg);margin-bottom:1rem">
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.75rem">
-                            <div>
-                                <h4 style="margin:0 0 0.25rem;display:flex;align-items:center;gap:0.5rem">
-                                    <span>🩺 System-Selbsttest & Integritätsprüfung</span>
-                                    <span id="adm-selftest-badge" class="badge" style="font-size:0.75rem;padding:0.2rem 0.55rem;background:var(--bg-secondary);border:1px solid var(--border)">Bereit</span>
-                                </h4>
-                                <div class="small muted">
-                                    Vollständige Prüfung von PHP-Umgebung, Dateisystem, SQLite-Integrität, AES-256-GCM Tresorverschlüsselung, ZIP-Engine und Bildverarbeitung.
+                    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:0.75rem">
+                        <button type="button" class="btn btn-sm btn-primary" id="btn-diag-view-system">🩺 System-Infrastruktur</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-diag-view-funcl">🧪 E2E Funktions-Test-Suite</button>
+                    </div>
+
+                    <div id="pane-diag-system">
+                        <div style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg);margin-bottom:1rem">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.75rem">
+                                <div>
+                                    <h4 style="margin:0 0 0.25rem;display:flex;align-items:center;gap:0.5rem">
+                                        <span>🩺 System-Selbsttest & Integritätsprüfung</span>
+                                        <span id="adm-selftest-badge" class="badge" style="font-size:0.75rem;padding:0.2rem 0.55rem;background:var(--bg-secondary);border:1px solid var(--border)">Bereit</span>
+                                    </h4>
+                                    <div class="small muted">
+                                        Vollständige Prüfung von PHP-Umgebung, Dateisystem, SQLite-Integrität, AES-256-GCM Tresorverschlüsselung, ZIP-Engine und Bildverarbeitung.
+                                    </div>
+                                </div>
+                                <div style="display:flex;gap:0.5rem;align-items:center">
+                                    <button type="button" class="btn btn-primary btn-sm" id="btn-adm-run-selftest">
+                                        ▶️ Selbsttest ausführen
+                                    </button>
                                 </div>
                             </div>
-                            <div style="display:flex;gap:0.5rem;align-items:center">
-                                <button type="button" class="btn btn-primary btn-sm" id="btn-adm-run-selftest">
-                                    ▶️ Selbsttest ausführen
-                                </button>
+
+                            <div id="adm-selftest-results" style="margin-top:1rem">
+                                <p class="muted small" style="margin:0.5rem 0">Klicken Sie auf „Selbsttest ausführen“, um alle Systemkomponenten zu testen.</p>
                             </div>
                         </div>
+                    </div>
 
-                        <div id="adm-selftest-results" style="margin-top:1rem">
-                            <p class="muted small" style="margin:0.5rem 0">Klicken Sie auf „Selbsttest ausführen“, um alle Systemkomponenten zu testen.</p>
+                    <div id="pane-diag-funcl" class="hidden">
+                        <div style="border:1px solid var(--border);border-radius:10px;padding:1rem;background:var(--bg);margin-bottom:1rem">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.75rem">
+                                <div>
+                                    <h4 style="margin:0 0 0.25rem;display:flex;align-items:center;gap:0.5rem">
+                                        <span>🧪 End-to-End Funktions-Test-Suite (Sandbox)</span>
+                                        <span id="adm-funcl-badge" class="badge" style="font-size:0.75rem;padding:0.2rem 0.55rem;background:var(--bg-secondary);border:1px solid var(--border)">Bereit</span>
+                                    </h4>
+                                    <div class="small muted">
+                                        Erstellt einen isolierten Testbenutzer und simuliert 16 Kern-Workflows wie ein echter Benutzer (Upload, Chunking, Versionen, Shares, Mappen, Aliase, Papierkorb, Shredder, Tresor, ZIP-Extraktion & Quota) mit rückstandsloser Bereinigung.
+                                    </div>
+                                </div>
+                                <div style="display:flex;gap:0.5rem;align-items:center">
+                                    <button type="button" class="btn btn-primary btn-sm" id="btn-adm-run-funcl">
+                                        ▶️ Funktions-Test starten
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="adm-funcl-results" style="margin-top:1rem">
+                                <p class="muted small" style="margin:0.5rem 0">Klicken Sie auf „Funktions-Test starten“, um alle 16 Workflows automatisiert durchzuspielen.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -9129,6 +9161,163 @@
             }
 
             $('#btn-adm-run-selftest', body)?.addEventListener('click', () => runSelfTest());
+
+            // Diagnostic View Sub-Toggle (System vs. Functional E2E)
+            let functionalTestsLoaded = false;
+            let isFunctionalRunning = false;
+
+            $('#btn-diag-view-system', body)?.addEventListener('click', () => {
+                $('#btn-diag-view-system', body).className = 'btn btn-sm btn-primary';
+                $('#btn-diag-view-funcl', body).className = 'btn btn-sm btn-secondary';
+                $('#pane-diag-system', body)?.classList.remove('hidden');
+                $('#pane-diag-funcl', body)?.classList.add('hidden');
+            });
+
+            $('#btn-diag-view-funcl', body)?.addEventListener('click', () => {
+                $('#btn-diag-view-system', body).className = 'btn btn-sm btn-secondary';
+                $('#btn-diag-view-funcl', body).className = 'btn btn-sm btn-primary';
+                $('#pane-diag-system', body)?.classList.add('hidden');
+                $('#pane-diag-funcl', body)?.classList.remove('hidden');
+                if (!functionalTestsLoaded) {
+                    runFunctionalTests();
+                }
+            });
+
+            async function runFunctionalTests() {
+                if (isFunctionalRunning) return;
+                const badge = $('#adm-funcl-badge', body);
+                const resultsContainer = $('#adm-funcl-results', body);
+                const runBtn = $('#btn-adm-run-funcl', body);
+                if (!resultsContainer) return;
+
+                isFunctionalRunning = true;
+                if (runBtn) {
+                    runBtn.disabled = true;
+                    runBtn.innerHTML = '⏳ Workflows laufen…';
+                }
+                if (badge) {
+                    badge.style.background = '#2563eb';
+                    badge.style.color = '#fff';
+                    badge.textContent = '⏳ Tests werden ausgeführt…';
+                }
+
+                resultsContainer.innerHTML = `
+                    <div style="text-align:center;padding:2.5rem 1rem">
+                        <div class="spinner" style="margin:0 auto 1rem;width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite"></div>
+                        <div style="font-weight:600">Automatisierte E2E Funktions-Test-Suite läuft…</div>
+                        <div class="small muted" style="margin-top:0.35rem">
+                            Erstelle Sandbox-Benutzer, teste 16 Benutzer-Workflows (Upload, Chunking, Versionen, Shares, Mappen, Aliase, Papierkorb, Shredder, Tresor, ZIP-Extraktion & Quota)...
+                        </div>
+                    </div>
+                `;
+
+                try {
+                    const res = await apiPost('admin_run_functional_tests');
+                    const report = res.report || {};
+                    functionalTestsLoaded = true;
+
+                    const summary = report.summary || {};
+                    const overall = report.overall_status || 'pass';
+                    const healthPercent = summary.health_percent ?? 100;
+
+                    if (badge) {
+                        if (overall === 'pass') {
+                            badge.style.background = '#10b981';
+                            badge.style.color = '#fff';
+                            badge.textContent = `✅ 100% Erfolgreich (${report.duration_ms} ms)`;
+                        } else {
+                            badge.style.background = '#ef4444';
+                            badge.style.color = '#fff';
+                            badge.textContent = `❌ ${summary.failed} Fehler (${report.duration_ms} ms)`;
+                        }
+                    }
+
+                    // Summary metrics
+                    let html = `
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:0.75rem;margin-bottom:1.25rem">
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Funktionsscore</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:${healthPercent === 100 ? '#10b981' : '#ef4444'}">
+                                    ${healthPercent}%
+                                </div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Bestanden</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:#10b981">${summary.passed || 0} / ${summary.total || 0}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Fehlgeschlagen</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:${(summary.failed || 0) > 0 ? '#ef4444' : '#10b981'}">${summary.failed || 0}</div>
+                            </div>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;background:var(--bg-secondary);text-align:center">
+                                <div class="small muted" style="font-weight:600">Gesamtlaufzeit</div>
+                                <div style="font-size:1.6rem;font-weight:800;color:var(--text)">${report.duration_ms || 0} <span style="font-size:0.8rem;font-weight:400">ms</span></div>
+                            </div>
+                        </div>
+
+                        <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);overflow:hidden">
+                            <div style="padding:0.6rem 0.75rem;background:var(--bg);font-weight:700;font-size:0.92rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+                                <span>Workflow-Ergebnisse (${(report.tests || []).length} Module)</span>
+                                <span class="small muted" style="font-weight:normal">Sandbox isoliert & rückstandslos bereinigt</span>
+                            </div>
+                            <div>
+                    `;
+
+                    (report.tests || []).forEach((t, idx) => {
+                        const isPass = t.status === 'pass';
+                        const icon = isPass ? '✅' : '❌';
+                        const badgeBg = isPass ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+                        const textColor = isPass ? '#10b981' : '#ef4444';
+
+                        html += `
+                            <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:0.65rem 0.75rem;border-bottom:1px solid var(--border);gap:0.75rem;font-size:0.88rem">
+                                <div style="display:flex;align-items:flex-start;gap:0.65rem;flex:1">
+                                    <span style="font-size:1.05rem;line-height:1.2">${icon}</span>
+                                    <div>
+                                        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+                                            <strong>#${idx + 1} ${esc(t.name)}</strong>
+                                            <span class="badge" style="font-size:0.72rem;padding:0.1rem 0.4rem;background:var(--bg);border:1px solid var(--border)">${esc(t.category)}</span>
+                                        </div>
+                                        <div class="small muted" style="margin-top:0.2rem;line-height:1.4">${esc(t.details || '')}</div>
+                                    </div>
+                                </div>
+                                <div style="text-align:right;white-space:nowrap">
+                                    <span style="font-family:monospace;font-size:0.8rem;font-weight:600;padding:0.2rem 0.5rem;border-radius:6px;background:${badgeBg};color:${textColor}">
+                                        ${isPass ? 'BESTANDEN' : 'FEHLER'}
+                                    </span>
+                                    <div class="small muted" style="font-size:0.72rem;margin-top:0.2rem">${t.duration_ms} ms</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    html += `
+                            </div>
+                        </div>
+                    `;
+
+                    resultsContainer.innerHTML = html;
+                } catch (err) {
+                    if (badge) {
+                        badge.style.background = '#ef4444';
+                        badge.style.color = '#fff';
+                        badge.textContent = '❌ Fehler';
+                    }
+                    resultsContainer.innerHTML = `
+                        <div style="color:var(--danger);padding:1rem 0">
+                            <strong>Fehler bei der Testausführung:</strong> ${esc(err.message)}
+                        </div>
+                    `;
+                } finally {
+                    isFunctionalRunning = false;
+                    if (runBtn) {
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '🔄 Erneut ausführen';
+                    }
+                }
+            }
+
+            $('#btn-adm-run-funcl', body)?.addEventListener('click', () => runFunctionalTests());
 
             if (activeTab === 'adm-diagnostics') {
                 runSelfTest();
