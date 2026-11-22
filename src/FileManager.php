@@ -2010,6 +2010,80 @@ class FileManager
     }
 
     /**
+     * Builds a complete manifest of all folders and files for two-way synchronization.
+     */
+    public static function getSyncManifest(int $userId): array
+    {
+        $pdo = Database::get();
+
+        // 1. Folders
+        $fStmt = $pdo->prepare('SELECT id, parent_id, name, updated_at FROM folders WHERE owner_id = :uid AND deleted_at IS NULL ORDER BY id ASC');
+        $fStmt->execute([':uid' => $userId]);
+        $folderRows = $fStmt->fetchAll();
+
+        $foldersById = [];
+        foreach ($folderRows as $r) {
+            $foldersById[(int)$r['id']] = [
+                'id'         => (int)$r['id'],
+                'parent_id'  => $r['parent_id'] !== null ? (int)$r['parent_id'] : null,
+                'name'       => (string)$r['name'],
+                'updated_at' => (string)($r['updated_at'] ?? ''),
+            ];
+        }
+
+        $pathCache = [];
+        $getPath = function (int $fid) use (&$foldersById, &$pathCache, &$getPath): string {
+            if (isset($pathCache[$fid])) {
+                return $pathCache[$fid];
+            }
+            if (!isset($foldersById[$fid])) {
+                return '';
+            }
+            $f = $foldersById[$fid];
+            $parentPath = $f['parent_id'] !== null ? $getPath($f['parent_id']) : '';
+            $full = $parentPath !== '' ? ($parentPath . '/' . $f['name']) : $f['name'];
+            $pathCache[$fid] = $full;
+            return $full;
+        };
+
+        $foldersList = [];
+        foreach ($foldersById as $fid => $f) {
+            $foldersList[] = [
+                'id'         => $fid,
+                'name'       => $f['name'],
+                'path'       => $getPath($fid),
+                'updated_at' => $f['updated_at'],
+            ];
+        }
+
+        // 2. Files
+        $fileStmt = $pdo->prepare('SELECT id, folder_id, name, size_bytes, updated_at, sha256 FROM files WHERE owner_id = :uid AND deleted_at IS NULL');
+        $fileStmt->execute([':uid' => $userId]);
+        $fileRows = $fileStmt->fetchAll();
+
+        $filesList = [];
+        foreach ($fileRows as $fl) {
+            $fid = $fl['folder_id'] !== null ? (int)$fl['folder_id'] : null;
+            $parentPath = $fid !== null ? $getPath($fid) : '';
+            $relPath = $parentPath !== '' ? ($parentPath . '/' . $fl['name']) : (string)$fl['name'];
+
+            $filesList[] = [
+                'id'          => (int)$fl['id'],
+                'name'        => (string)$fl['name'],
+                'path'        => $relPath,
+                'size_bytes'  => (int)$fl['size_bytes'],
+                'sha256'      => (string)($fl['sha256'] ?? ''),
+                'updated_at'  => (string)($fl['updated_at'] ?? ''),
+            ];
+        }
+
+        return [
+            'folders' => $foldersList,
+            'files'   => $filesList,
+        ];
+    }
+
+    /**
      * Collects all folder IDs in a folder subtree (the folder itself + all non-deleted descendants).
      */
     public static function collectSubtreeFolderIds(PDO $pdo, int $rootFolderId): array

@@ -15,6 +15,37 @@ pub struct RemoteFileItem {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteFolderItem {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteFileManifestItem {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub sha256: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncManifestData {
+    pub folders: Vec<RemoteFolderItem>,
+    pub files: Vec<RemoteFileManifestItem>,
+}
+
+#[derive(Deserialize)]
+struct SyncManifestResponse {
+    pub ok: bool,
+    pub data: Option<SyncManifestData>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct PureCloudApiClient {
     client: Client,
@@ -72,8 +103,32 @@ impl PureCloudApiClient {
         }
     }
 
+    pub async fn get_sync_manifest(&self) -> Result<SyncManifestData, String> {
+        let url = format!("{}/api.php?action=sync_manifest", self.server_base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Netzwerkfehler beim Abruf des Cloud-Manifests: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Server antwortete mit Status: {}", resp.status()));
+        }
+
+        let body = resp
+            .json::<SyncManifestResponse>()
+            .await
+            .map_err(|e| format!("Ungültiges Antwortformat vom Server: {}", e))?;
+
+        if let Some(err) = body.error {
+            return Err(err);
+        }
+
+        body.data.ok_or_else(|| "Keine Manifest-Daten empfangen".to_string())
+    }
+
     pub async fn get_storage_quota(&self) -> Result<(u64, u64), String> {
-        // Query user info or settings
         let url = format!("{}/api.php?action=current_user", self.server_base_url);
         let resp = self
             .client
@@ -194,10 +249,8 @@ impl PureCloudApiClient {
 }
 
 fn base64_encode(input: &str) -> String {
-    use std::io::Write;
     let mut buf = Vec::new();
     {
-        // Simple base64 encoder without external dependency
         const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let bytes = input.as_bytes();
         for chunk in bytes.chunks(3) {

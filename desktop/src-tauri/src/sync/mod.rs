@@ -3,10 +3,11 @@ pub mod conflict;
 pub mod watcher;
 
 use crate::config::SyncConfig;
-use crate::state::{QuotaInfo, SharedState, SyncActivityItem, SyncProgress, SyncStatus};
+use crate::state::{CloudFolderSummary, QuotaInfo, SharedState, SyncActivityItem, SyncProgress, SyncStatus};
 use api::PureCloudApiClient;
 use chrono::Utc;
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -80,7 +81,7 @@ impl SyncEngine {
                 }
                 Some(_changed_path) = watch_rx.recv() => {
                     // Short debounce before running sync
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(600)).await;
                     let cfg = config_lock.read().await.clone();
                     if cfg.is_configured() && !cfg.is_paused {
                         Self::execute_sync_cycle(&cfg, &state).await;
@@ -127,62 +128,85 @@ impl SyncEngine {
             });
         }
 
-        // 2. Lokalen Ordner durchsuchen
+        // 2. Cloud Manifest abrufen (Zwei-Wege-Synchronisation)
+        let manifest = match api_client.get_sync_manifest().await {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("Konnte Cloud-Manifest nicht abrufen: {}", e);
+                api::SyncManifestData {
+                    folders: Vec::new(),
+                    files: Vec::new(),
+                }
+            }
+        };
+
+        // Cloud-Ordnerliste im State für die UI aktualisieren
+        {
+            let mut s = state.lock().await;
+            s.cloud_folders = manifest
+                .folders
+                .iter()
+                .map(|f| CloudFolderSummary {
+                    id: f.id,
+                    name: f.name.clone(),
+                    path: f.path.clone(),
+                })
+                .collect();
+        }
+
         let local_root = PathBuf::from(&config.local_path);
         if !local_root.exists() {
             let _ = tokio::fs::create_dir_all(&local_root).await;
         }
 
-        let mut local_files = Vec::new();
-        for entry in WalkDir::new(&local_root).into_iter().filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path == local_root {
-                continue;
-            }
-            let filename = path.file_name().unwrap_or_default().to_string_lossy();
-            if filename.starts_with('.')
-                || filename.ends_with(".tmp")
-                || filename.ends_with(".part")
-                || filename.contains("~")
-            {
-                continue;
-            }
-
-            if let Ok(rel) = path.strip_prefix(&local_root) {
-                local_files.push((path.to_path_buf(), rel.to_string_lossy().to_string(), entry.file_type().is_dir()));
+        // 3. DOWNLOAD-PHASE (Cloud -> Lokal)
+        // 3a. Alle Cloud-Ordner lokal anlegen
+        for remote_folder in &manifest.folders {
+            let target_dir = local_root.join(&remote_folder.path);
+            if !target_dir.exists() {
+                if let Err(e) = tokio::fs::create_dir_all(&target_dir).await {
+                    log::warn!("Konnte lokalen Ordner nicht erstellen {}: {}", remote_folder.path, e);
+                }
             }
         }
 
-        // 3. Upload lokaler Änderungen zum Server
-        let total_items = local_files.len();
-        for (idx, (abs_path, rel_path, is_dir)) in local_files.into_iter().enumerate() {
-            {
-                let mut s = state.lock().await;
-                let percent = if total_items > 0 {
-                    (((idx + 1) as f64 / total_items as f64) * 100.0) as u8
-                } else {
-                    100
-                };
-                s.progress = Some(SyncProgress {
-                    current_file: rel_path.clone(),
-                    bytes_done: idx as u64,
-                    bytes_total: total_items as u64,
-                    percent,
-                });
-            }
-
-            if is_dir {
-                let _ = api_client.create_remote_folder(&rel_path).await;
+        // 3b. Cloud-Dateien herunterladen wenn lokal nicht vorhanden oder Dateigröße abweicht
+        let total_downloads = manifest.files.len();
+        for (idx, remote_file) in manifest.files.iter().enumerate() {
+            let target_file = local_root.join(&remote_file.path);
+            let needs_download = if !target_file.exists() {
+                true
+            } else if let Ok(meta) = tokio::fs::metadata(&target_file).await {
+                meta.len() != remote_file.size_bytes
             } else {
-                match api_client.upload_file(&abs_path, &rel_path).await {
+                false
+            };
+
+            if needs_download {
+                {
+                    let mut s = state.lock().await;
+                    let percent = if total_downloads > 0 {
+                        (((idx + 1) as f64 / total_downloads as f64) * 100.0) as u8
+                    } else {
+                        100
+                    };
+                    s.progress = Some(SyncProgress {
+                        current_file: format!("Herunterladen: {}", remote_file.path),
+                        bytes_done: idx as u64,
+                        bytes_total: total_downloads as u64,
+                        percent,
+                    });
+                }
+
+                match api_client.download_file(&remote_file.path, &target_file).await {
                     Ok(bytes) => {
                         let mut s = state.lock().await;
                         s.activities.insert(
                             0,
                             SyncActivityItem {
-                                id: format!("up_{}", Utc::now().timestamp_millis()),
-                                path: rel_path,
-                                action: "upload".to_string(),
+                                id: format!("down_{}", Utc::now().timestamp_millis()),
+                                path: remote_file.path.clone(),
+                                action: "download".to_string(),
                                 size_bytes: bytes,
                                 timestamp: Utc::now(),
                                 status: "success".to_string(),
@@ -194,7 +218,92 @@ impl SyncEngine {
                         }
                     }
                     Err(e) => {
-                        log::warn!("Upload-Fehler bei {}: {}", rel_path, e);
+                        log::warn!("Download-Fehler bei {}: {}", remote_file.path, e);
+                    }
+                }
+            }
+        }
+
+        // 4. UPLOAD-PHASE (Lokal -> Cloud)
+        let mut local_items = Vec::new();
+        for entry in WalkDir::new(&local_root).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path == local_root {
+                continue;
+            }
+            let filename = path.file_name().unwrap_or_default().to_string_lossy();
+            if filename.starts_with('.')
+                || filename.ends_with(".tmp")
+                || filename.ends_with(".part")
+                || filename.contains('~')
+            {
+                continue;
+            }
+
+            if let Ok(rel) = path.strip_prefix(&local_root) {
+                let rel_str = rel.to_string_lossy().to_string();
+                local_items.push((path.to_path_buf(), rel_str, entry.file_type().is_dir()));
+            }
+        }
+
+        let remote_folder_paths: HashSet<String> = manifest.folders.iter().map(|f| f.path.clone()).collect();
+        let remote_file_map: HashMap<String, u64> = manifest.files.iter().map(|f| (f.path.clone(), f.size_bytes)).collect();
+
+        let total_items = local_items.len();
+        for (idx, (abs_path, rel_path, is_dir)) in local_items.into_iter().enumerate() {
+            if is_dir {
+                if !remote_folder_paths.contains(&rel_path) {
+                    let _ = api_client.create_remote_folder(&rel_path).await;
+                }
+            } else {
+                let local_size = match tokio::fs::metadata(&abs_path).await {
+                    Ok(m) => m.len(),
+                    Err(_) => 0,
+                };
+
+                let needs_upload = match remote_file_map.get(&rel_path) {
+                    Some(&rem_size) => rem_size != local_size,
+                    None => true,
+                };
+
+                if needs_upload {
+                    {
+                        let mut s = state.lock().await;
+                        let percent = if total_items > 0 {
+                            (((idx + 1) as f64 / total_items as f64) * 100.0) as u8
+                        } else {
+                            100
+                        };
+                        s.progress = Some(SyncProgress {
+                            current_file: format!("Hochladen: {}", rel_path),
+                            bytes_done: local_size,
+                            bytes_total: local_size,
+                            percent,
+                        });
+                    }
+
+                    match api_client.upload_file(&abs_path, &rel_path).await {
+                        Ok(bytes) => {
+                            let mut s = state.lock().await;
+                            s.activities.insert(
+                                0,
+                                SyncActivityItem {
+                                    id: format!("up_{}", Utc::now().timestamp_millis()),
+                                    path: rel_path,
+                                    action: "upload".to_string(),
+                                    size_bytes: bytes,
+                                    timestamp: Utc::now(),
+                                    status: "success".to_string(),
+                                    message: None,
+                                },
+                            );
+                            if s.activities.len() > 100 {
+                                s.activities.truncate(100);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Upload-Fehler bei {}: {}", rel_path, e);
+                        }
                     }
                 }
             }

@@ -65,7 +65,7 @@
             }
         });
 
-        document.getElementById('btn-open-folder').addEventListener('click', () => invoke('open_local_folder'));
+        document.getElementById('btn-open-folder').addEventListener('click', () => invoke('open_local_folder', { subpath: null }));
         document.getElementById('btn-open-web').addEventListener('click', () => invoke('open_web_url'));
 
         // Setup Form
@@ -175,8 +175,45 @@
             quotaFill.style.width = '0%';
         }
 
+        // Cloud Folders
+        renderCloudFolders(data.cloud_folders || []);
+
         // Activities
         renderActivities(data.recent_activities || []);
+    }
+
+    function renderCloudFolders(folders) {
+        const folderListEl = document.getElementById('cloud-folder-list');
+        const folderCountEl = document.getElementById('cloud-folder-count');
+        if (!folderListEl || !folderCountEl) return;
+
+        folderCountEl.textContent = `${folders.length} Ordner`;
+        if (folders.length === 0) {
+            folderListEl.innerHTML = `
+                <div class="empty-state" style="padding:15px 10px">
+                    <div class="empty-icon" style="font-size:24px;margin-bottom:4px">📁</div>
+                    <div>Keine Ordner in der Cloud gefunden oder Abgleich läuft…</div>
+                </div>
+            `;
+            return;
+        }
+
+        folderListEl.innerHTML = folders.map(f => `
+            <div class="cloud-folder-item">
+                <div class="cloud-folder-left">
+                    <span>📁</span>
+                    <span class="cloud-folder-path" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-ghost open-folder-btn" data-subpath="${escapeHtml(f.path)}" title="Diesen Ordner lokal öffnen">📂 Öffnen</button>
+            </div>
+        `).join('');
+
+        folderListEl.querySelectorAll('.open-folder-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sub = btn.getAttribute('data-subpath');
+                invoke('open_local_folder', { subpath: sub });
+            });
+        });
     }
 
     function renderActivities(items) {

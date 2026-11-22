@@ -38,6 +38,13 @@ pub struct QuotaInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudFolderSummary {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientStatusPayload {
     pub status: SyncStatus,
     pub status_text: String,
@@ -47,6 +54,7 @@ pub struct ClientStatusPayload {
     pub last_sync_time: Option<DateTime<Utc>>,
     pub progress: Option<SyncProgress>,
     pub quota: Option<QuotaInfo>,
+    pub cloud_folders: Vec<CloudFolderSummary>,
     pub recent_activities: Vec<SyncActivityItem>,
 }
 
@@ -55,6 +63,7 @@ pub struct InnerState {
     pub last_sync_time: Option<DateTime<Utc>>,
     pub progress: Option<SyncProgress>,
     pub quota: Option<QuotaInfo>,
+    pub cloud_folders: Vec<CloudFolderSummary>,
     pub activities: Vec<SyncActivityItem>,
 }
 
@@ -65,6 +74,7 @@ impl Default for InnerState {
             last_sync_time: None,
             progress: None,
             quota: None,
+            cloud_folders: Vec::new(),
             activities: Vec::new(),
         }
     }

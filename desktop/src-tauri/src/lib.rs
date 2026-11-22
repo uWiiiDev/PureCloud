@@ -46,6 +46,7 @@ async fn get_status(app_ctx: State<'_, AppContext>) -> Result<ClientStatusPayloa
         last_sync_time: s.last_sync_time,
         progress: s.progress.clone(),
         quota: s.quota.clone(),
+        cloud_folders: s.cloud_folders.clone(),
         recent_activities: s.activities.clone(),
     })
 }
@@ -102,9 +103,15 @@ async fn toggle_pause(app_ctx: State<'_, AppContext>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn open_local_folder(app_ctx: State<'_, AppContext>) -> Result<(), String> {
+async fn open_local_folder(app_ctx: State<'_, AppContext>, subpath: Option<String>) -> Result<(), String> {
     let cfg = app_ctx.config.read().await;
-    let p = std::path::PathBuf::from(&cfg.local_path);
+    let mut p = std::path::PathBuf::from(&cfg.local_path);
+    if let Some(sub) = subpath {
+        let clean = sub.trim_start_matches('/');
+        if !clean.is_empty() {
+            p = p.join(clean);
+        }
+    }
     if !p.exists() {
         let _ = std::fs::create_dir_all(&p);
     }

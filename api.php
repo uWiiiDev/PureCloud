@@ -171,8 +171,9 @@ try {
     }
     $userId = (int)$user['id'];
 
-    // Verify CSRF on all POST requests
-    if ($method === 'POST') {
+    // Verify CSRF on all POST requests (unless authenticated via Basic Auth for desktop sync/API)
+    $hasBasicAuth = !empty($_SERVER['PHP_AUTH_USER']) || !empty($_SERVER['HTTP_AUTHORIZATION']) || !empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+    if ($method === 'POST' && !$hasBasicAuth) {
         $csrfHeader = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? null);
         if (!Auth::verifyCsrf(is_string($csrfHeader) ? $csrfHeader : null)) {
             jsonResponse(['ok' => false, 'error' => 'Ungültiges Sicherheits-Token (CSRF). Bitte Seite neu laden.'], 403);
@@ -180,6 +181,31 @@ try {
     }
 
     switch ($action) {
+        case 'current_user':
+            jsonResponse([
+                'ok'   => true,
+                'user' => [
+                    'id'           => $user['id'],
+                    'username'     => $user['username'],
+                    'display_name' => $user['display_name'],
+                    'used_bytes'   => $user['used_bytes'],
+                    'quota_bytes'  => $user['quota_bytes'],
+                ],
+            ]);
+
+        case 'sync_manifest':
+            $manifest = FileManager::getSyncManifest($userId);
+            jsonResponse([
+                'ok'   => true,
+                'data' => $manifest,
+                'user' => [
+                    'id'           => $user['id'],
+                    'username'     => $user['username'],
+                    'display_name' => $user['display_name'],
+                    'used_bytes'   => $user['used_bytes'],
+                    'quota_bytes'  => $user['quota_bytes'],
+                ],
+            ]);
         case 'list':
             $view     = (string)($_GET['view'] ?? 'files');
             $folderId = isset($_GET['folder_id']) && $_GET['folder_id'] !== '' ? (int)$_GET['folder_id'] : null;

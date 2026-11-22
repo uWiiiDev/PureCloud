@@ -199,6 +199,27 @@ class Auth
         }
 
         if (empty($_SESSION['user_id'])) {
+            // Check HTTP Basic Auth header (for desktop sync client & API tools)
+            $authUser = $_SERVER['PHP_AUTH_USER'] ?? null;
+            $authPass = $_SERVER['PHP_AUTH_PW'] ?? null;
+            if ($authUser === null) {
+                $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+                if (stripos($authHeader, 'Basic ') === 0) {
+                    $decoded = base64_decode(substr($authHeader, 6), true);
+                    if ($decoded !== false && str_contains($decoded, ':')) {
+                        [$authUser, $authPass] = explode(':', $decoded, 2);
+                    }
+                }
+            }
+            if ($authUser !== null && $authPass !== null) {
+                $verified = self::verifyBasicAuth((string)$authUser, (string)$authPass);
+                if ($verified) {
+                    $_SESSION['user_id'] = (int)$verified['id'];
+                }
+            }
+        }
+
+        if (empty($_SESSION['user_id'])) {
             return null;
         }
         $stmt = $pdo->prepare('
