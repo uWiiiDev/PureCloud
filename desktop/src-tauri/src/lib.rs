@@ -94,10 +94,15 @@ async fn toggle_pause(app_ctx: State<'_, AppContext>) -> Result<bool, String> {
 
     let mut s = app_ctx.state.lock().await;
     s.status = if paused {
+        s.progress = None;
         SyncStatus::Paused
     } else {
         SyncStatus::Idle
     };
+
+    if !paused {
+        let _ = app_ctx.trigger_tx.send(()).await;
+    }
 
     Ok(paused)
 }

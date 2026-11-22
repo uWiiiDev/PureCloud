@@ -68,30 +68,52 @@ impl SyncEngine {
         while !stop_flag.load(Ordering::Relaxed) {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let cfg = config_lock.read().await.clone();
-                    if cfg.is_configured() && !cfg.is_paused {
-                        Self::execute_sync_cycle(&cfg, &state).await;
+                    let should_run = {
+                        let cfg = config_lock.read().await;
+                        cfg.is_configured() && !cfg.is_paused
+                    };
+                    if should_run {
+                        Self::execute_sync_cycle(&config_lock, &state).await;
                     }
                 }
                 Some(_) = trigger_rx.recv() => {
-                    let cfg = config_lock.read().await.clone();
-                    if cfg.is_configured() && !cfg.is_paused {
-                        Self::execute_sync_cycle(&cfg, &state).await;
+                    let should_run = {
+                        let cfg = config_lock.read().await;
+                        cfg.is_configured() && !cfg.is_paused
+                    };
+                    if should_run {
+                        Self::execute_sync_cycle(&config_lock, &state).await;
                     }
                 }
                 Some(_changed_path) = watch_rx.recv() => {
                     // Short debounce before running sync
                     tokio::time::sleep(Duration::from_millis(600)).await;
-                    let cfg = config_lock.read().await.clone();
-                    if cfg.is_configured() && !cfg.is_paused {
-                        Self::execute_sync_cycle(&cfg, &state).await;
+                    let should_run = {
+                        let cfg = config_lock.read().await;
+                        cfg.is_configured() && !cfg.is_paused
+                    };
+                    if should_run {
+                        Self::execute_sync_cycle(&config_lock, &state).await;
                     }
                 }
             }
         }
     }
 
-    async fn execute_sync_cycle(config: &SyncConfig, state: &SharedState) {
+    async fn execute_sync_cycle(config_lock: &Arc<tokio::sync::RwLock<SyncConfig>>, state: &SharedState) {
+        let config = {
+            let cfg = config_lock.read().await;
+            if !cfg.is_configured() || cfg.is_paused {
+                let mut s = state.lock().await;
+                if cfg.is_paused {
+                    s.status = SyncStatus::Paused;
+                }
+                s.progress = None;
+                return;
+            }
+            cfg.clone()
+        };
+
         {
             let mut s = state.lock().await;
             if s.status == SyncStatus::Syncing {
@@ -126,6 +148,14 @@ impl SyncEngine {
                 total_bytes: total,
                 used_percent: percent,
             });
+        }
+
+        // Check if paused
+        if config_lock.read().await.is_paused {
+            let mut s = state.lock().await;
+            s.status = SyncStatus::Paused;
+            s.progress = None;
+            return;
         }
 
         // 2. Cloud Manifest abrufen (Zwei-Wege-Synchronisation)
@@ -163,6 +193,13 @@ impl SyncEngine {
         // 3. DOWNLOAD-PHASE (Cloud -> Lokal)
         // 3a. Alle Cloud-Ordner lokal anlegen (sofern Modus Download erlaubt)
         for remote_folder in &manifest.folders {
+            if config_lock.read().await.is_paused {
+                let mut s = state.lock().await;
+                s.status = SyncStatus::Paused;
+                s.progress = None;
+                return;
+            }
+
             let mode = config.get_folder_mode(&remote_folder.path);
             if mode == "disabled" || mode == "upload_only" {
                 continue; // Ordner nicht lokal anlegen
@@ -179,6 +216,13 @@ impl SyncEngine {
         // 3b. Cloud-Dateien herunterladen wenn Modus Download erlaubt
         let total_downloads = manifest.files.len();
         for (idx, remote_file) in manifest.files.iter().enumerate() {
+            if config_lock.read().await.is_paused {
+                let mut s = state.lock().await;
+                s.status = SyncStatus::Paused;
+                s.progress = None;
+                return;
+            }
+
             let mode = config.get_folder_mode(&remote_file.path);
             if mode == "disabled" || mode == "upload_only" {
                 continue; // Datei überspringen
@@ -262,6 +306,13 @@ impl SyncEngine {
 
         let total_items = local_items.len();
         for (idx, (abs_path, rel_path, is_dir)) in local_items.into_iter().enumerate() {
+            if config_lock.read().await.is_paused {
+                let mut s = state.lock().await;
+                s.status = SyncStatus::Paused;
+                s.progress = None;
+                return;
+            }
+
             let mode = config.get_folder_mode(&rel_path);
             if mode == "disabled" || mode == "download_only" {
                 continue; // Ordner/Datei vom Upload ausschließen
@@ -328,7 +379,12 @@ impl SyncEngine {
         // Sync abgeschlossen
         {
             let mut s = state.lock().await;
-            s.status = SyncStatus::Idle;
+            let cfg = config_lock.read().await;
+            if cfg.is_paused {
+                s.status = SyncStatus::Paused;
+            } else {
+                s.status = SyncStatus::Idle;
+            }
             s.progress = None;
             s.last_sync_time = Some(Utc::now());
         }

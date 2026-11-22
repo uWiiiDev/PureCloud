@@ -8,6 +8,8 @@
     let currentConfig = null;
     let pollTimer = null;
     let isPaused = false;
+    let lastRenderedFoldersJson = '';
+    let lastRenderedActivitiesJson = '';
 
     // DOM Elements
     const viewSetup = document.getElementById('view-setup');
@@ -176,6 +178,20 @@
             quotaFill.style.width = '0%';
         }
 
+        // Pause toggle button sync
+        const btnPause = document.getElementById('btn-pause-toggle');
+        const isPausedState = data.status === 'Paused';
+        if (btnPause) {
+            btnPause.textContent = isPausedState ? '▶️ Fortsetzen' : '⏸️ Pause';
+            if (isPausedState) {
+                btnPause.classList.add('btn-warning');
+                btnPause.classList.remove('btn-secondary');
+            } else {
+                btnPause.classList.remove('btn-warning');
+                btnPause.classList.add('btn-secondary');
+            }
+        }
+
         // Cloud Folders
         renderCloudFolders(data.cloud_folders || []);
 
@@ -189,6 +205,20 @@
         if (!folderListEl || !folderCountEl) return;
 
         folderCountEl.textContent = `${folders.length} Ordner`;
+
+        // Don't re-render if user is currently interacting with a dropdown in this list!
+        const activeEl = document.activeElement;
+        if (activeEl && folderListEl.contains(activeEl)) {
+            return;
+        }
+
+        // Only re-render if folder data actually changed
+        const currentJson = JSON.stringify(folders);
+        if (currentJson === lastRenderedFoldersJson) {
+            return;
+        }
+        lastRenderedFoldersJson = currentJson;
+
         if (folders.length === 0) {
             folderListEl.innerHTML = `
                 <div class="empty-state" style="padding:15px 10px">
@@ -240,9 +270,31 @@
             sel.addEventListener('change', async (e) => {
                 const path = e.target.getAttribute('data-path');
                 const newMode = e.target.value;
+
+                // Optimistic UI update: update badge immediately without waiting
+                const folderItem = sel.closest('.cloud-folder-item');
+                if (folderItem) {
+                    const badge = folderItem.querySelector('.sync-rule-badge');
+                    if (badge) {
+                        badge.className = `sync-rule-badge ${
+                            newMode === 'two_way' ? 'badge-two-way' :
+                            newMode === 'download_only' ? 'badge-download-only' :
+                            newMode === 'upload_only' ? 'badge-upload-only' : 'badge-disabled'
+                        }`;
+                        badge.textContent =
+                            newMode === 'two_way' ? '🔁 2-Wege' :
+                            newMode === 'download_only' ? '⬇️ Nur Download' :
+                            newMode === 'upload_only' ? '⬆️ Nur Upload' : '⏸️ Deaktiviert';
+                    }
+                    if (newMode === 'disabled') {
+                        folderItem.classList.add('folder-item-disabled');
+                    } else {
+                        folderItem.classList.remove('folder-item-disabled');
+                    }
+                }
+
                 try {
                     await invoke('set_folder_sync_mode', { path, mode: newMode });
-                    await refreshStatus();
                 } catch (err) {
                     console.error('Fehler beim Setzen des Ordner-Modus:', err);
                 }
@@ -260,6 +312,12 @@
 
     function renderActivities(items) {
         activityCount.textContent = `${items.length} Vorgänge`;
+
+        const currentJson = JSON.stringify(items);
+        if (currentJson === lastRenderedActivitiesJson) {
+            return;
+        }
+        lastRenderedActivitiesJson = currentJson;
         if (items.length === 0) {
             activityList.innerHTML = `
                 <div class="empty-state">
@@ -393,7 +451,7 @@
 
     function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
-        pollTimer = setInterval(refreshStatus, 1500);
+        pollTimer = setInterval(refreshStatus, 2000);
     }
 
     function showMsg(el, text, type) {
