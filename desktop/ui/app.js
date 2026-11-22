@@ -10,6 +10,8 @@
     let isPaused = false;
     let lastRenderedFoldersJson = '';
     let lastRenderedActivitiesJson = '';
+    const expandedFolders = new Set();
+    let currentDefaultSyncMode = 'two_way';
 
     // DOM Elements
     const viewSetup = document.getElementById('view-setup');
@@ -70,6 +72,39 @@
 
         document.getElementById('btn-open-folder').addEventListener('click', () => invoke('open_local_folder', { subpath: null }));
         document.getElementById('btn-open-web').addEventListener('click', () => invoke('open_web_url'));
+
+        // Global Sync Mode
+        const globalSelect = document.getElementById('global-sync-select');
+        if (globalSelect) {
+            globalSelect.addEventListener('change', async (e) => {
+                const newMode = e.target.value;
+                currentDefaultSyncMode = newMode;
+                try {
+                    await invoke('set_default_sync_mode', { mode: newMode, applyToAll: false });
+                    lastRenderedFoldersJson = '';
+                    await refreshStatus();
+                } catch (err) {
+                    console.error('Fehler beim Ändern des Standardmodus:', err);
+                }
+            });
+        }
+
+        const btnApplyAll = document.getElementById('btn-apply-all-rules');
+        if (btnApplyAll) {
+            btnApplyAll.addEventListener('click', async () => {
+                const mode = globalSelect ? globalSelect.value : 'two_way';
+                const label = getModeLabel(mode);
+                if (confirm(`Möchten Sie alle individuellen Ausnahmen verwerfen und "${label}" auf alle Ordner anwenden?`)) {
+                    try {
+                        await invoke('set_default_sync_mode', { mode, applyToAll: true });
+                        lastRenderedFoldersJson = '';
+                        await refreshStatus();
+                    } catch (err) {
+                        console.error('Fehler:', err);
+                    }
+                }
+            });
+        }
 
         // Setup Form
         document.getElementById('btn-test-conn').addEventListener('click', testSetupConnection);
@@ -192,14 +227,31 @@
             }
         }
 
+        // Global sync mode dropdown sync
+        const globalSelect = document.getElementById('global-sync-select');
+        if (globalSelect && data.default_sync_mode && document.activeElement !== globalSelect) {
+            globalSelect.value = data.default_sync_mode;
+            currentDefaultSyncMode = data.default_sync_mode;
+        }
+
         // Cloud Folders
-        renderCloudFolders(data.cloud_folders || []);
+        renderCloudFolders(data.cloud_folders || [], data.default_sync_mode || 'two_way');
 
         // Activities
         renderActivities(data.recent_activities || []);
     }
 
-    function renderCloudFolders(folders) {
+    function getModeLabel(mode) {
+        switch (mode) {
+            case 'download_only': return '⬇️ Nur Download';
+            case 'upload_only': return '⬆️ Nur Upload';
+            case 'disabled': return '⏸️ Deaktiviert';
+            case 'two_way':
+            default: return '🔁 Beidseitig (2-Wege)';
+        }
+    }
+
+    function renderCloudFolders(folders, defaultMode) {
         const folderListEl = document.getElementById('cloud-folder-list');
         const folderCountEl = document.getElementById('cloud-folder-count');
         if (!folderListEl || !folderCountEl) return;
@@ -212,12 +264,30 @@
             return;
         }
 
-        // Only re-render if folder data actually changed
-        const currentJson = JSON.stringify(folders);
-        if (currentJson === lastRenderedFoldersJson) {
+        // Map for fast parent lookups
+        const foldersByPath = new Map();
+        folders.forEach(f => foldersByPath.set(f.path, f));
+
+        // Filter: only show root folders OR subfolders whose ancestors are ALL expanded!
+        const visibleFolders = folders.filter(f => {
+            if (f.depth === 0) return true;
+            let curParent = f.parent_path;
+            while (curParent) {
+                if (!expandedFolders.has(curParent)) {
+                    return false;
+                }
+                const pObj = foldersByPath.get(curParent);
+                curParent = pObj ? pObj.parent_path : null;
+            }
+            return true;
+        });
+
+        // Cache key combining visible items and expanded state
+        const currentCacheKey = JSON.stringify(visibleFolders) + Array.from(expandedFolders).sort().join(',') + (defaultMode || '');
+        if (currentCacheKey === lastRenderedFoldersJson) {
             return;
         }
-        lastRenderedFoldersJson = currentJson;
+        lastRenderedFoldersJson = currentCacheKey;
 
         if (folders.length === 0) {
             folderListEl.innerHTML = `
@@ -229,35 +299,76 @@
             return;
         }
 
-        folderListEl.innerHTML = folders.map(f => {
-            const mode = f.sync_mode || 'two_way';
+        folderListEl.innerHTML = visibleFolders.map(f => {
+            const isRoot = f.depth === 0;
+            const isExpanded = expandedFolders.has(f.path);
+            const effectiveMode = f.sync_mode || 'two_way';
+            const isExplicit = !!f.explicit_rule && f.explicit_rule !== 'inherit';
+
+            // Find parent mode for inheritance label
+            let parentMode = defaultMode || 'two_way';
+            if (f.parent_path && foldersByPath.has(f.parent_path)) {
+                parentMode = foldersByPath.get(f.parent_path).sync_mode || parentMode;
+            }
+
             const badgeClass =
-                mode === 'two_way' ? 'badge-two-way' :
-                mode === 'download_only' ? 'badge-download-only' :
-                mode === 'upload_only' ? 'badge-upload-only' : 'badge-disabled';
+                effectiveMode === 'two_way' ? 'badge-two-way' :
+                effectiveMode === 'download_only' ? 'badge-download-only' :
+                effectiveMode === 'upload_only' ? 'badge-upload-only' : 'badge-disabled';
 
-            const badgeText =
-                mode === 'two_way' ? '🔁 2-Wege' :
-                mode === 'download_only' ? '⬇️ Nur Download' :
-                mode === 'upload_only' ? '⬆️ Nur Upload' : '⏸️ Deaktiviert';
+            const badgePrefix = isRoot
+                ? (isExplicit ? '⭐ ' : '🔗 ')
+                : (isExplicit ? '⭐ Eigene: ' : '🔗 Geerbt: ');
 
-            const isLocal = mode !== 'disabled';
+            const badgeText = `${badgePrefix}${getModeLabel(effectiveMode)}`;
+            const isLocal = effectiveMode !== 'disabled';
+
+            // Indentation for subfolder levels
+            const indentPx = f.depth * 22;
+
+            // Expand / collapse arrow toggle
+            const toggleHtml = f.has_children
+                ? `<button type="button" class="folder-toggle-btn" data-toggle-path="${escapeHtml(f.path)}" title="${isExpanded ? 'Unterordner einklappen' : 'Unterordner aufklappen'}">${isExpanded ? '▼' : '▶'}</button>`
+                : `<span style="width:18px;display:inline-block"></span>`;
+
+            const subCountHtml = f.has_children
+                ? `<span class="subfolder-count-badge" data-toggle-path="${escapeHtml(f.path)}" title="${isExpanded ? 'Unterordner einklappen' : 'Unterordner aufklappen'}">${f.subfolder_count} ${f.subfolder_count === 1 ? 'Unterordner' : 'Unterordner'}</span>`
+                : '';
+
+            // Dropdown options
+            let selectOptions = '';
+            if (isRoot) {
+                selectOptions = `
+                    <option value="inherit" ${!isExplicit ? 'selected' : ''}>🔗 Standard (${getModeLabel(defaultMode)})</option>
+                    <option value="two_way" ${isExplicit && f.explicit_rule === 'two_way' ? 'selected' : ''}>🔁 Beidseitig (2-Wege)</option>
+                    <option value="download_only" ${isExplicit && f.explicit_rule === 'download_only' ? 'selected' : ''}>⬇️ Nur Download (Cloud → PC)</option>
+                    <option value="upload_only" ${isExplicit && f.explicit_rule === 'upload_only' ? 'selected' : ''}>⬆️ Nur Upload (PC → Cloud)</option>
+                    <option value="disabled" ${isExplicit && f.explicit_rule === 'disabled' ? 'selected' : ''}>⏸️ Deaktiviert (Nur Cloud)</option>
+                `;
+            } else {
+                selectOptions = `
+                    <option value="inherit" ${!isExplicit ? 'selected' : ''}>🔗 Geerbt (${getModeLabel(parentMode)})</option>
+                    <option value="two_way" ${isExplicit && f.explicit_rule === 'two_way' ? 'selected' : ''}>🔁 Eigene: Beidseitig (2-Wege)</option>
+                    <option value="download_only" ${isExplicit && f.explicit_rule === 'download_only' ? 'selected' : ''}>⬇️ Eigene: Nur Download</option>
+                    <option value="upload_only" ${isExplicit && f.explicit_rule === 'upload_only' ? 'selected' : ''}>⬆️ Eigene: Nur Upload</option>
+                    <option value="disabled" ${isExplicit && f.explicit_rule === 'disabled' ? 'selected' : ''}>⏸️ Eigene: Deaktiviert</option>
+                `;
+            }
 
             return `
-                <div class="cloud-folder-item ${mode === 'disabled' ? 'folder-item-disabled' : ''}">
+                <div class="cloud-folder-item ${!isRoot ? 'folder-subitem' : ''} ${effectiveMode === 'disabled' ? 'folder-item-disabled' : ''}" style="${indentPx > 0 ? `margin-left:${indentPx}px;` : ''}">
                     <div class="cloud-folder-left">
-                        <span>${mode === 'disabled' ? '☁️' : '📁'}</span>
+                        ${toggleHtml}
+                        <span>${effectiveMode === 'disabled' ? '☁️' : '📁'}</span>
                         <div class="folder-title-box">
-                            <span class="cloud-folder-path" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+                            <span class="cloud-folder-path" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</span>
+                            ${subCountHtml}
                             <span class="sync-rule-badge ${badgeClass}">${badgeText}</span>
                         </div>
                     </div>
                     <div class="cloud-folder-right">
                         <select class="folder-mode-select" data-path="${escapeHtml(f.path)}" title="Synchronisations-Modus für diesen Ordner wählen">
-                            <option value="two_way" ${mode === 'two_way' ? 'selected' : ''}>🔁 Beidseitig (2-Wege)</option>
-                            <option value="download_only" ${mode === 'download_only' ? 'selected' : ''}>⬇️ Nur Download (Cloud → PC)</option>
-                            <option value="upload_only" ${mode === 'upload_only' ? 'selected' : ''}>⬆️ Nur Upload (PC → Cloud)</option>
-                            <option value="disabled" ${mode === 'disabled' ? 'selected' : ''}>⏸️ Deaktiviert (Nur Cloud)</option>
+                            ${selectOptions}
                         </select>
                         <button type="button" class="btn btn-sm btn-ghost open-folder-btn" data-subpath="${escapeHtml(f.path)}" ${!isLocal ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''} title="${isLocal ? 'Diesen Ordner lokal öffnen' : 'Ordner ist lokal deaktiviert'}">📂</button>
                     </div>
@@ -265,36 +376,31 @@
             `;
         }).join('');
 
+        // Event listener: Expand/collapse toggle
+        folderListEl.querySelectorAll('.folder-toggle-btn, .subfolder-count-badge').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const path = el.getAttribute('data-toggle-path');
+                if (expandedFolders.has(path)) {
+                    expandedFolders.delete(path);
+                } else {
+                    expandedFolders.add(path);
+                }
+                lastRenderedFoldersJson = ''; // force re-render
+                renderCloudFolders(folders, defaultMode);
+            });
+        });
+
         // Event listener: Sync mode dropdown change
         folderListEl.querySelectorAll('.folder-mode-select').forEach(sel => {
             sel.addEventListener('change', async (e) => {
                 const path = e.target.getAttribute('data-path');
                 const newMode = e.target.value;
 
-                // Optimistic UI update: update badge immediately without waiting
-                const folderItem = sel.closest('.cloud-folder-item');
-                if (folderItem) {
-                    const badge = folderItem.querySelector('.sync-rule-badge');
-                    if (badge) {
-                        badge.className = `sync-rule-badge ${
-                            newMode === 'two_way' ? 'badge-two-way' :
-                            newMode === 'download_only' ? 'badge-download-only' :
-                            newMode === 'upload_only' ? 'badge-upload-only' : 'badge-disabled'
-                        }`;
-                        badge.textContent =
-                            newMode === 'two_way' ? '🔁 2-Wege' :
-                            newMode === 'download_only' ? '⬇️ Nur Download' :
-                            newMode === 'upload_only' ? '⬆️ Nur Upload' : '⏸️ Deaktiviert';
-                    }
-                    if (newMode === 'disabled') {
-                        folderItem.classList.add('folder-item-disabled');
-                    } else {
-                        folderItem.classList.remove('folder-item-disabled');
-                    }
-                }
-
                 try {
                     await invoke('set_folder_sync_mode', { path, mode: newMode });
+                    lastRenderedFoldersJson = ''; // force re-render
+                    await refreshStatus();
                 } catch (err) {
                     console.error('Fehler beim Setzen des Ordner-Modus:', err);
                 }

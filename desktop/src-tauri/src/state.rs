@@ -42,7 +42,12 @@ pub struct CloudFolderSummary {
     pub id: i64,
     pub name: String,
     pub path: String,
-    pub sync_mode: String, // "two_way", "download_only", "upload_only", "disabled"
+    pub parent_path: Option<String>,
+    pub depth: usize,
+    pub has_children: bool,
+    pub subfolder_count: usize,
+    pub sync_mode: String,             // Effektiver Modus (entweder geerbt oder explizit)
+    pub explicit_rule: Option<String>, // Eigene Regel falls Vererbung ausgeschaltet: Some("two_way"), etc.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +60,7 @@ pub struct ClientStatusPayload {
     pub last_sync_time: Option<DateTime<Utc>>,
     pub progress: Option<SyncProgress>,
     pub quota: Option<QuotaInfo>,
+    pub default_sync_mode: String,
     pub cloud_folders: Vec<CloudFolderSummary>,
     pub recent_activities: Vec<SyncActivityItem>,
 }

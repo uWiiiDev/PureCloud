@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+fn default_sync_mode_val() -> String {
+    "two_way".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncConfig {
     pub server_url: String,
@@ -14,8 +18,10 @@ pub struct SyncConfig {
     pub is_paused: bool,
     pub auto_start: bool,
     pub theme: String,
+    #[serde(default = "default_sync_mode_val")]
+    pub default_sync_mode: String, // Globaler Standard: "two_way", "download_only", "upload_only", "disabled"
     #[serde(default)]
-    pub folder_rules: HashMap<String, String>, // path -> "two_way" | "download_only" | "upload_only" | "disabled"
+    pub folder_rules: HashMap<String, String>, // path -> "two_way" | "download_only" | "upload_only" | "disabled" | "inherit"
 }
 
 impl Default for SyncConfig {
@@ -33,6 +39,7 @@ impl Default for SyncConfig {
             is_paused: false,
             auto_start: false,
             theme: "dark".to_string(),
+            default_sync_mode: "two_way".to_string(),
             folder_rules: HashMap::new(),
         }
     }
@@ -80,22 +87,44 @@ impl SyncConfig {
             && !self.local_path.trim().is_empty()
     }
 
+    pub fn get_default_mode(&self) -> String {
+        if self.default_sync_mode.is_empty() {
+            "two_way".to_string()
+        } else {
+            self.default_sync_mode.clone()
+        }
+    }
+
     pub fn get_folder_mode(&self, rel_path: &str) -> String {
         let clean = rel_path.trim_matches('/').replace('\\', "/");
         if clean.is_empty() {
-            return "two_way".to_string();
+            return self.get_default_mode();
         }
+
+        // 1. Direkte Regel für diesen Pfad
         if let Some(mode) = self.folder_rules.get(&clean) {
-            return mode.clone();
+            if mode != "inherit" && !mode.is_empty() {
+                return mode.clone();
+            }
         }
-        // Prüfen, ob ein Elternordner eine Regel hat (z. B. "Dokumente" für "Dokumente/Rechnungen")
+
+        // 2. Vererbung: Prüfen, ob ein Elternordner in der Hierarchie eine Regel vorgibt
         let mut current = clean.as_str();
         while let Some((parent, _)) = current.rsplit_once('/') {
             if let Some(mode) = self.folder_rules.get(parent) {
-                return mode.clone();
+                if mode != "inherit" && !mode.is_empty() {
+                    return mode.clone();
+                }
             }
             current = parent;
         }
-        "two_way".to_string()
+
+        // 3. Fallback auf den zentralen Standard
+        self.get_default_mode()
+    }
+
+    pub fn get_explicit_rule(&self, rel_path: &str) -> Option<String> {
+        let clean = rel_path.trim_matches('/').replace('\\', "/");
+        self.folder_rules.get(&clean).cloned()
     }
 }

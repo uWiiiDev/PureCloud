@@ -130,6 +130,20 @@
                         <span class="small muted" id="cloud-folder-count">0 Ordner</span>
                     </div>
 
+                    <!-- Global sync rule bar -->
+                    <div class="global-sync-bar">
+                        <div class="global-sync-left">
+                            <span class="global-sync-label">Standard für alle Ordner:</span>
+                            <select id="global-sync-select" class="folder-mode-select" title="Zentralen Standard-Modus für alle Ordner festlegen">
+                                <option value="two_way">🔁 Beidseitig (2-Wege)</option>
+                                <option value="download_only">⬇️ Nur Download (Cloud → PC)</option>
+                                <option value="upload_only">⬆️ Nur Upload (PC → Cloud)</option>
+                                <option value="disabled">⏸️ Deaktiviert (Nur Cloud)</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-apply-all-rules" title="Alle Ausnahmen verwerfen und diesen Standard auf alle Ordner übertragen">🔄 Auf alle anwenden</button>
+                    </div>
+
                     <div id="cloud-folder-list" class="cloud-folder-list">
                         <div class="empty-state" style="padding:15px 10px">
                             <div class="empty-icon" style="font-size:24px;margin-bottom:4px">📂</div>

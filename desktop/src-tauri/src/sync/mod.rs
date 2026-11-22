@@ -170,17 +170,36 @@ impl SyncEngine {
             }
         };
 
-        // Cloud-Ordnerliste im State für die UI aktualisieren (inklusive aktuellem Sync-Modus)
+        // Cloud-Ordnerliste im State für die UI aktualisieren (inklusive Baumstruktur & Vererbung)
         {
             let mut s = state.lock().await;
+            let folder_paths: Vec<String> = manifest.folders.iter().map(|f| f.path.clone()).collect();
             s.cloud_folders = manifest
                 .folders
                 .iter()
-                .map(|f| CloudFolderSummary {
-                    id: f.id,
-                    name: f.name.clone(),
-                    path: f.path.clone(),
-                    sync_mode: config.get_folder_mode(&f.path),
+                .map(|f| {
+                    let parent_path = f.path.rsplit_once('/').map(|(p, _)| p.to_string());
+                    let depth = f.path.split('/').count() - 1;
+                    let prefix = format!("{}/", f.path);
+                    let subfolder_count = folder_paths
+                        .iter()
+                        .filter(|p| p.starts_with(&prefix) && p.split('/').count() == f.path.split('/').count() + 1)
+                        .count();
+                    let has_children = subfolder_count > 0;
+                    let sync_mode = config.get_folder_mode(&f.path);
+                    let explicit_rule = config.get_explicit_rule(&f.path);
+
+                    CloudFolderSummary {
+                        id: f.id,
+                        name: f.name.clone(),
+                        path: f.path.clone(),
+                        parent_path,
+                        depth,
+                        has_children,
+                        subfolder_count,
+                        sync_mode,
+                        explicit_rule,
+                    }
                 })
                 .collect();
         }

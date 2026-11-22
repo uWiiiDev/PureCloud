@@ -46,6 +46,7 @@ async fn get_status(app_ctx: State<'_, AppContext>) -> Result<ClientStatusPayloa
         last_sync_time: s.last_sync_time,
         progress: s.progress.clone(),
         quota: s.quota.clone(),
+        default_sync_mode: cfg.get_default_mode(),
         cloud_folders: s.cloud_folders.clone(),
         recent_activities: s.activities.clone(),
     })
@@ -124,13 +125,43 @@ async fn open_local_folder(app_ctx: State<'_, AppContext>, subpath: Option<Strin
 }
 
 #[tauri::command]
+async fn set_default_sync_mode(
+    mode: String,
+    apply_to_all: bool,
+    app_ctx: State<'_, AppContext>,
+) -> Result<(), String> {
+    let mut cfg = app_ctx.config.write().await;
+    cfg.default_sync_mode = mode;
+    if apply_to_all {
+        cfg.folder_rules.clear();
+    }
+    let _ = cfg.save();
+    let _ = app_ctx.trigger_tx.send(()).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_folder_sync_mode(
     path: String,
     mode: String,
     app_ctx: State<'_, AppContext>,
 ) -> Result<(), String> {
     let mut cfg = app_ctx.config.write().await;
-    cfg.folder_rules.insert(path, mode);
+    let clean = path.trim_matches('/').replace('\\', "/");
+    if mode == "inherit" {
+        cfg.folder_rules.remove(&clean);
+    } else {
+        cfg.folder_rules.insert(clean, mode);
+    }
+    let _ = cfg.save();
+    let _ = app_ctx.trigger_tx.send(()).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn reset_all_folder_rules(app_ctx: State<'_, AppContext>) -> Result<(), String> {
+    let mut cfg = app_ctx.config.write().await;
+    cfg.folder_rules.clear();
     let _ = cfg.save();
     let _ = app_ctx.trigger_tx.send(()).await;
     Ok(())
@@ -283,7 +314,9 @@ pub fn run() {
             trigger_sync,
             toggle_pause,
             open_local_folder,
+            set_default_sync_mode,
             set_folder_sync_mode,
+            reset_all_folder_rules,
             hide_to_tray,
             open_web_url
         ])
