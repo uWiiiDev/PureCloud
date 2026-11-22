@@ -39,6 +39,7 @@
     function bindEvents() {
         // Theme toggle
         document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
+        document.getElementById('btn-minimize-tray').addEventListener('click', () => invoke('hide_to_tray'));
 
         // Settings open/close
         document.getElementById('btn-open-settings').addEventListener('click', openSettings);

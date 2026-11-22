@@ -140,6 +140,14 @@ async fn open_web_url(app_ctx: State<'_, AppContext>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    Ok(())
+}
+
 pub fn run() {
     let initial_config = SyncConfig::load();
     let shared_state: SharedState = Arc::new(tokio::sync::Mutex::new(InnerState::default()));
@@ -170,6 +178,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(app_context)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Fenster nicht beenden, sondern in den System-Tray minimieren
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             // Build Tray Menu
             let tray_status = MenuItem::with_id(app, "tray_status", "PureCloud: Bereit", false, None::<&str>)?;
@@ -240,8 +255,14 @@ pub fn run() {
                     {
                         let app = tray.app_handle();
                         if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
+                            let is_visible = win.is_visible().unwrap_or(false);
+                            if is_visible {
+                                let _ = win.hide();
+                            } else {
+                                let _ = win.show();
+                                let _ = win.unminimize();
+                                let _ = win.set_focus();
+                            }
                         }
                     }
                 })
@@ -258,6 +279,7 @@ pub fn run() {
             toggle_pause,
             open_local_folder,
             set_folder_sync_mode,
+            hide_to_tray,
             open_web_url
         ])
         .run(tauri::generate_context!())
