@@ -1425,7 +1425,7 @@
 
         const renderPaneRows = (items, side) => {
             if (items.length === 0) {
-                return `<tr><td colspan="3" class="empty-cell">Ordner ist leer – Dateien hierher ziehen</td></tr>`;
+                return `<tr><td colspan="4" class="empty-cell">Ordner ist leer – Dateien hierher ziehen</td></tr>`;
             }
             return items.map((item) => {
                 const key = `${item.type}:${item.id}`;
@@ -1452,6 +1452,9 @@
                             </div>
                         </td>
                         <td class="muted small" style="width:90px;text-align:right;white-space:nowrap">${isFolder ? '—' : formatBytes(item.size_bytes)}</td>
+                        <td style="width:36px;text-align:center;padding:0">
+                            <button type="button" class="btn-item-more" data-split-side="${side}" data-action-key="${key}" title="Aktionen">⋮</button>
+                        </td>
                     </tr>
                 `;
             }).join('');
@@ -1472,6 +1475,7 @@
                                     <th style="width:32px"></th>
                                     <th>Name</th>
                                     <th style="text-align:right">Größe</th>
+                                    <th style="width:36px"></th>
                                 </tr>
                             </thead>
                             <tbody>${renderPaneRows(leftItems, 'left')}</tbody>
@@ -1492,6 +1496,7 @@
                                     <th style="width:32px"></th>
                                     <th>Name</th>
                                     <th style="text-align:right">Größe</th>
+                                    <th style="width:36px"></th>
                                 </tr>
                             </thead>
                             <tbody>${renderPaneRows(rightItems, 'right')}</tbody>
@@ -1602,11 +1607,26 @@
             });
         });
 
+        // 3-dots action button in split view
+        $$('.btn-item-more', container).forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const key = btn.dataset.actionKey;
+                const it = itemMap.get(key);
+                if (!it) return;
+                const rect = btn.getBoundingClientRect();
+                const side = btn.dataset.splitSide || 'left';
+                openContextMenu(it, rect.left, rect.bottom + 4, side);
+            });
+        });
+
         // Open folder in the respective pane or open file modal
         $$('[data-split-open]', container).forEach((el) => {
             el.addEventListener('click', (e) => {
-                if (el.closest('[data-key]')?.dataset.longPressed === '1') {
-                    el.closest('[data-key]').dataset.longPressed = '0';
+                const row = el.closest('[data-key]');
+                if (Date.now() < suppressItemClickUntil || row?.dataset.longPressed === '1') {
+                    if (row) row.dataset.longPressed = '0';
                     e.preventDefault();
                     return;
                 }
@@ -1786,6 +1806,7 @@
                                     Geändert ${arrow('date')}
                                 </span>
                             </th>
+                            <th class="th-col-actions" style="width:40px;text-align:center" title="Aktionen"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1794,7 +1815,7 @@
         if (allItems.length === 0) {
             html += `
                 <tr>
-                    <td colspan="5" class="empty-cell">
+                    <td colspan="6" class="empty-cell">
                         Keine Einträge für den Filter <strong>${esc(activeFilterSummary())}</strong> gefunden.
                         <button type="button" class="btn btn-ghost btn-sm" id="btn-empty-filter-reset" style="margin-left:0.5rem">Filter zurücksetzen</button>
                     </td>
@@ -1860,6 +1881,9 @@
                     </td>
                     <td class="muted" style="white-space:nowrap">${isFolder ? '—' : formatBytes(item.size_bytes)}</td>
                     <td class="muted small hide-mobile">${esc((item.updated_at || '').replace('T', ' ').slice(0, 16))}</td>
+                    <td class="cell-actions" style="width:40px;text-align:center;padding:0 2px">
+                        <button type="button" class="btn-item-more" data-action-key="${key}" title="Aktionen" aria-label="Aktionen für ${esc(item.name)}">⋮</button>
+                    </td>
                 </tr>
             `;
         }
@@ -1963,6 +1987,7 @@
                                 </button>
                             ` : ''}
                             <span>${item.is_encrypted || item.encrypted_count > 0 ? '🔒' : (item.group_name ? '👪' : (item.share_count > 0 ? '🔗' : ''))}</span>
+                            <button type="button" class="btn-item-more" data-action-key="${key}" title="Aktionen" aria-label="Aktionen für ${esc(item.name)}">⋮</button>
                         </div>
                     </div>
                     <div class="grid-preview" data-open="${key}">
@@ -1999,6 +2024,7 @@
 
     // Context Menu (Right-Click on Desktop / Long-Touch on Mobile)
     let contextMenuOpenedAt = 0;
+    let suppressItemClickUntil = 0;
 
     function closeContextMenu() {
         $('#context-menu')?.classList.add('hidden');
@@ -2006,7 +2032,7 @@
     }
 
     $('#context-menu-backdrop')?.addEventListener('click', (e) => {
-        if (Date.now() - contextMenuOpenedAt < 650) {
+        if (Date.now() - contextMenuOpenedAt < 250) {
             e.preventDefault();
             e.stopPropagation();
             return;
@@ -2015,13 +2041,16 @@
     });
     $('#context-menu-backdrop')?.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (Date.now() - contextMenuOpenedAt < 650) {
+        if (Date.now() - contextMenuOpenedAt < 250) {
             return;
         }
         closeContextMenu();
     });
-    window.addEventListener('scroll', () => {
-        if (Date.now() - contextMenuOpenedAt < 650) return;
+    window.addEventListener('scroll', (e) => {
+        if (Date.now() - contextMenuOpenedAt < 500) return;
+        if (e.target && (e.target.id === 'context-menu' || e.target.closest?.('#context-menu'))) {
+            return;
+        }
         closeContextMenu();
     }, true);
 
@@ -2088,6 +2117,7 @@
         if (!menu || !backdrop) return;
 
         contextMenuOpenedAt = Date.now();
+        suppressItemClickUntil = Date.now() + 650;
 
         const isTrash = state.view === 'trash';
         const isFolder = item.type === 'folder';
@@ -2102,7 +2132,12 @@
             : [item];
         const countSuffix = targetItems.length > 1 ? ` (${targetItems.length})` : '';
 
-        let itemsHtml = `<div class="context-menu-header">${icon} ${esc(item.name)}</div>`;
+        let itemsHtml = `
+            <div class="context-menu-header">
+                <span class="context-menu-title">${icon} ${esc(item.name)}</span>
+                <button type="button" class="context-menu-close-btn" id="btn-context-menu-close" title="Schließen" aria-label="Schließen">✕</button>
+            </div>
+        `;
 
         if (isTrash) {
             itemsHtml += `
@@ -2360,6 +2395,12 @@
         backdrop.classList.remove('hidden');
         menu.classList.remove('hidden');
 
+        $('#btn-context-menu-close', menu)?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            closeContextMenu();
+        });
+
         // Submenu hover & click logic
         $$('.ctx-submenu-item', menu).forEach((itemEl) => {
             const sub = itemEl.querySelector('.ctx-submenu');
@@ -2456,10 +2497,16 @@
         if (!menu || !backdrop) return;
 
         contextMenuOpenedAt = Date.now();
+        suppressItemClickUntil = Date.now() + 650;
         const hasClip = state.clipboard && state.clipboard.items?.length > 0;
         const clipCount = hasClip ? state.clipboard.items.length : 0;
 
-        let html = `<div class="context-menu-header">📂 Aktueller Ordner</div>`;
+        let html = `
+            <div class="context-menu-header">
+                <span class="context-menu-title">📂 Aktueller Ordner</span>
+                <button type="button" class="context-menu-close-btn" id="btn-context-menu-close" title="Schließen" aria-label="Schließen">✕</button>
+            </div>
+        `;
         if (hasClip) {
             html += `
                 <button type="button" class="dropdown-item" data-bg-act="paste">
@@ -2480,6 +2527,12 @@
         menu.innerHTML = html;
         backdrop.classList.remove('hidden');
         menu.classList.remove('hidden');
+
+        $('#btn-context-menu-close', menu)?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            closeContextMenu();
+        });
 
         const rect = menu.getBoundingClientRect();
         menu.style.left = `${Math.min(clientX, Math.max(12, window.innerWidth - rect.width - 12))}px`;
@@ -2526,7 +2579,7 @@
         let bgX = 0;
         let bgY = 0;
         vp.addEventListener('touchstart', (e) => {
-            if (e.touches.length !== 1 || e.target.closest('[data-key]') || e.target.closest('button, a, input')) return;
+            if (e.touches.length !== 1 || e.target.closest('[data-key]') || e.target.closest('button, a, input, .btn-item-more')) return;
             bgX = e.touches[0].clientX;
             bgY = e.touches[0].clientY;
             const pane = e.target.closest('.split-pane');
@@ -2535,14 +2588,14 @@
                 : state.currentFolderId;
             bgTimer = setTimeout(() => {
                 if (navigator.vibrate) {
-                    try { navigator.vibrate(15); } catch (_) {}
+                    try { navigator.vibrate(25); } catch (_) {}
                 }
                 openBackgroundContextMenu(bgX, bgY, folderId);
-            }, 450);
+            }, 400);
         }, { passive: true });
         vp.addEventListener('touchmove', (e) => {
             if (!bgTimer || e.touches.length !== 1) return;
-            if (Math.abs(e.touches[0].clientX - bgX) > 12 || Math.abs(e.touches[0].clientY - bgY) > 12) {
+            if (Math.abs(e.touches[0].clientX - bgX) > 22 || Math.abs(e.touches[0].clientY - bgY) > 22) {
                 clearTimeout(bgTimer);
                 bgTimer = null;
             }
@@ -2563,59 +2616,65 @@
     }
 
     function bindContextMenuEvents(el, item, splitSide = 'left') {
-        // 1. Desktop Right-Click
+        // 1. Native Right-Click / Context Menu (Desktop & mobile native long-press)
         el.addEventListener('contextmenu', (e) => {
-            if (el.dataset.touchActive === '1') {
-                e.preventDefault();
-                return;
-            }
             e.preventDefault();
             e.stopPropagation();
-            openContextMenu(item, e.clientX, e.clientY, splitSide);
+            suppressItemClickUntil = Date.now() + 650;
+            el.dataset.longPressed = '1';
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+            el.classList.remove('touch-armed');
+            openContextMenu(item, e.clientX || lastX, e.clientY || lastY, splitSide);
         });
 
-        // 2. Mobile Long-Touch (~430ms):
-        //    - Hold & lift finger without moving -> Opens Context Menu
-        //    - Hold & drag finger -> Moves item(s) onto hovered folder or breadcrumb!
+        // Intercept synthetic ghost clicks after long touch
+        el.addEventListener('click', (e) => {
+            if (Date.now() < suppressItemClickUntil || el.dataset.longPressed === '1') {
+                el.dataset.longPressed = '0';
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true); // capturing phase!
+
+        // 2. Mobile Long-Touch (~380ms)
         let touchTimer = null;
         let startX = 0;
         let startY = 0;
         let lastX = 0;
         let lastY = 0;
-        let armed = false;
-        let dragging = false;
-        let hoveredTargetEl = null;
-        let hoveredFolderId = undefined; // undefined = no target, null = root folder, number = subfolder ID
-        let hoveredFolderName = '';
-
-        const clearHoveredTarget = () => {
-            if (hoveredTargetEl) {
-                hoveredTargetEl.classList.remove('drag-over');
-                hoveredTargetEl = null;
-            }
-            hoveredFolderId = undefined;
-            hoveredFolderName = '';
-        };
+        let longPressTriggered = false;
 
         el.addEventListener('touchstart', (e) => {
-            if (e.touches.length !== 1 || e.target.closest('input, button, a')) return;
+            if (e.touches.length !== 1) return;
+            // Don't trigger long press if touching checkboxes, buttons, or links
+            if (e.target.closest('input, button, a, .btn-fav, .btn-item-more')) return;
+
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
             lastX = startX;
             lastY = startY;
-            armed = false;
-            dragging = false;
+            longPressTriggered = false;
             el.dataset.touchActive = '1';
 
+            if (touchTimer) clearTimeout(touchTimer);
             touchTimer = setTimeout(() => {
                 touchTimer = null;
-                armed = true;
+                longPressTriggered = true;
                 el.dataset.longPressed = '1';
+                suppressItemClickUntil = Date.now() + 650;
                 el.classList.add('touch-armed');
                 if (navigator.vibrate) {
-                    try { navigator.vibrate(18); } catch (_) {}
+                    try { navigator.vibrate(28); } catch (_) {}
                 }
-            }, 430);
+                // Open Context Menu immediately while finger is held
+                openContextMenu(item, lastX, lastY, splitSide);
+                setTimeout(() => {
+                    el.classList.remove('touch-armed');
+                }, 350);
+            }, 380);
         }, { passive: true });
 
         el.addEventListener('touchmove', (e) => {
@@ -2627,127 +2686,38 @@
             const dx = Math.abs(tx - startX);
             const dy = Math.abs(ty - startY);
 
-            if (!armed) {
-                if (dx > 12 || dy > 12) {
+            if (!longPressTriggered) {
+                // If the finger moves more than 22px, the user is scrolling the page -> cancel long-touch
+                if (dx > 22 || dy > 22) {
                     if (touchTimer) {
                         clearTimeout(touchTimer);
                         touchTimer = null;
                     }
+                    el.classList.remove('touch-armed');
                 }
                 return;
             }
 
-            // Armed! If the user moves their finger after the 430ms vibration, switch to Touch-Drag mode
-            if (!dragging && (dx > 10 || dy > 10)) {
-                if (state.view === 'trash' || item.is_group_folder) return;
-                dragging = true;
-                closeContextMenu();
-            }
-
-            if (dragging) {
-                if (e.cancelable) e.preventDefault();
-
-                const key = `${item.type}:${item.id}`;
-                const dragCount = state.selected.has(key) ? state.selected.size : 1;
-                const baseLabel = dragCount > 1
-                    ? `📦 ${dragCount} Elemente`
-                    : `${item.type === 'folder' ? '📁' : '📄'} ${item.name}`;
-
-                const ghost = getOrCreateTouchGhost();
-                ghost.classList.remove('hidden');
-                ghost.style.left = `${tx}px`;
-                ghost.style.top = `${ty}px`;
-
-                // Auto-scroll #file-viewport near top/bottom edges
-                const vp = $('#file-viewport');
-                if (vp) {
-                    const vpRect = vp.getBoundingClientRect();
-                    if (ty < vpRect.top + 55) {
-                        vp.scrollTop -= 10;
-                    } else if (ty > vpRect.bottom - 55) {
-                        vp.scrollTop += 10;
-                    }
-                }
-
-                // Detect drop target under finger
-                const underEl = document.elementFromPoint(tx, ty);
-                const folderRow = underEl?.closest('[data-type="folder"]');
-                const crumbEl = underEl?.closest('.crumb[data-crumb-id], [data-split-crumb]');
-
-                clearHoveredTarget();
-
-                if (folderRow && Number(folderRow.dataset.id) !== item.id) {
-                    hoveredTargetEl = folderRow;
-                    hoveredFolderId = Number(folderRow.dataset.id);
-                    hoveredFolderName = folderRow.querySelector('.item-name, .grid-title')?.textContent || 'Ordner';
-                    hoveredTargetEl.classList.add('drag-over');
-                    ghost.textContent = `📥 In „${hoveredFolderName}“`;
-                } else if (crumbEl) {
-                    hoveredTargetEl = crumbEl;
-                    const rawId = crumbEl.dataset.crumbId ?? crumbEl.dataset.folderId ?? '';
-                    hoveredFolderId = rawId === '' ? null : Number(rawId);
-                    hoveredFolderName = crumbEl.textContent || 'Ordner';
-                    hoveredTargetEl.classList.add('drag-over');
-                    ghost.textContent = `📥 Nach „${hoveredFolderName}“`;
-                } else {
-                    ghost.textContent = baseLabel;
-                }
-            }
+            if (e.cancelable) e.preventDefault();
         }, { passive: false });
 
-        const finishTouch = async (cancelled = false) => {
+        const finishTouch = () => {
             if (touchTimer) {
                 clearTimeout(touchTimer);
                 touchTimer = null;
             }
             el.classList.remove('touch-armed');
-            setTimeout(() => { el.dataset.touchActive = '0'; }, 300);
-
-            const ghost = $('#touch-drag-ghost');
-            if (ghost) ghost.classList.add('hidden');
-
-            if (cancelled) {
-                clearHoveredTarget();
-                armed = false;
-                dragging = false;
-                return;
+            if (longPressTriggered) {
+                suppressItemClickUntil = Math.max(suppressItemClickUntil, Date.now() + 650);
+                el.dataset.longPressed = '1';
             }
-
-            if (armed && !dragging) {
-                // User held finger for 430ms and lifted without dragging -> Open Context Menu!
-                armed = false;
-                openContextMenu(item, lastX, lastY, splitSide);
-                return;
-            }
-
-            if (dragging) {
-                const targetId = hoveredFolderId;
-                const targetName = hoveredFolderName;
-                clearHoveredTarget();
-                armed = false;
-                dragging = false;
-
-                if (targetId !== undefined) {
-                    const key = `${item.type}:${item.id}`;
-                    const dragItems = state.selected.has(key)
-                        ? Array.from(state.selected.values()).map((x) => ({ type: x.type, id: x.id, name: x.name }))
-                        : [{ type: item.type, id: item.id, name: item.name }];
-
-                    try {
-                        const res = await apiPost('move', { items: dragItems, target_folder_id: targetId });
-                        if (res.moved > 0) {
-                            toast(`In „${targetName}“ verschoben.`);
-                            loadCurrentView();
-                        }
-                    } catch (err) {
-                        toast(err.message, 'error');
-                    }
-                }
-            }
+            setTimeout(() => {
+                el.dataset.touchActive = '0';
+            }, 400);
         };
 
-        el.addEventListener('touchend', () => finishTouch(false), { passive: true });
-        el.addEventListener('touchcancel', () => finishTouch(true), { passive: true });
+        el.addEventListener('touchend', finishTouch, { passive: true });
+        el.addEventListener('touchcancel', finishTouch, { passive: true });
     }
 
     function bindItemEvents(container, allItems) {
@@ -2797,6 +2767,19 @@
             });
         });
 
+        // 3-dots action button (opens context menu directly on click / tap)
+        $$('.btn-item-more', container).forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const key = btn.dataset.actionKey;
+                const it = itemMap.get(key);
+                if (!it) return;
+                const rect = btn.getBoundingClientRect();
+                openContextMenu(it, rect.left, rect.bottom + 4);
+            });
+        });
+
         // Click on Location Subline -> Jump to Folder
         $$('[data-goto-folder]', container).forEach((el) => {
             el.addEventListener('click', (e) => {
@@ -2816,9 +2799,10 @@
         $$('[data-open]', container).forEach((el) => {
             el.addEventListener('click', (e) => {
                 const row = el.closest('[data-key]');
-                if (row?.dataset.longPressed === '1') {
-                    row.dataset.longPressed = '0';
+                if (Date.now() < suppressItemClickUntil || row?.dataset.longPressed === '1') {
+                    if (row) row.dataset.longPressed = '0';
                     e.preventDefault();
+                    e.stopPropagation();
                     return;
                 }
                 const key = el.dataset.open;
